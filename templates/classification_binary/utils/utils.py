@@ -1,34 +1,25 @@
 # Core libraries
-import pandas as pd
-
-# Reset variables and functions from other scripts
+import warnings
 import importlib
+
+import pandas as pd
 import utils.config as config
-importlib.reload(config)
-
-from sklearn.model_selection import train_test_split
-
-# Preprocessing
+from IPython.display import display, Markdown
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import (
     StandardScaler,
     OneHotEncoder,
     OrdinalEncoder,
-    FunctionTransformer
+    FunctionTransformer,
 )
-
-from IPython.display import display, Markdown
-
-import warnings
-warnings.filterwarnings("ignore")
-
-# Pipelines
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
-
-from sklearn.model_selection import StratifiedKFold
-
-# Encoding
+from sklearn.model_selection import (
+    train_test_split,
+    StratifiedKFold,
+    GridSearchCV,
+    RandomizedSearchCV,
+)
 from utils.config import (
     primary_metric,
     drop_features,
@@ -38,18 +29,12 @@ from utils.config import (
     numerical_cols,
     onehot_cols,
     ordinal_cols,
-    model_configs
+    model_configs,
 )
-
-# Models
 from sklearn.dummy import DummyClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
 from lightgbm import LGBMClassifier
-
-from sklearn.model_selection import GridSearchCV, RandomizedSearchCV
-
-# Model evaluation metrics
 from sklearn.metrics import (
     accuracy_score,
     average_precision_score,
@@ -59,32 +44,56 @@ from sklearn.metrics import (
     recall_score,
     roc_auc_score,
     roc_curve,
-    precision_recall_curve
+    precision_recall_curve,
 )
-
 import shap
 import seaborn as sns
 from matplotlib import pyplot as plt
 
+importlib.reload(config)
+warnings.filterwarnings("ignore")
 
+
+# ---------------------------------------------------------------------------
+# Data preparation utilities (used in `0_prep.ipynb`)
+# ---------------------------------------------------------------------------
 
 def load_data(file_one, file_two=None):
-    if (file_two == None):
+    """Load one or two CSV files into Pandas DataFrames."""
+    if file_two is None:
         return pd.read_csv(file_one), None
-    else:
-        return pd.read_csv(file_one), pd.read_csv(file_two)
-    
+    return pd.read_csv(file_one), pd.read_csv(file_two)
 
 
-# Remove duplicated examples in the data
 def dedup(df):
+    """Drop duplicate rows and log how many were removed."""
     num_dupes = df.duplicated().sum()
     if num_dupes > 0:
-        print(f'Successfully deleted {num_dupes} duplicated examples.')
+        print(f"Successfully deleted {num_dupes} duplicated examples.")
         df = df.drop_duplicates()
     return df
 
 
+def prepare_train_test_split(train_df, test_df, label):
+    if test_df is None:
+        X = train_df
+        y = train_df[label]
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.2, stratify=y, random_state=42
+        )
+        return X, y, X_train, X_test, y_train, y_test, None
+    else:
+        X_train = train_df
+        y_train = train_df[label]
+        X_test = test_df if label in test_df.columns else test_df
+        y_test = test_df[label] if label in test_df.columns else None
+        return X, y, X_train, X_test, y_train, y_test, None
+
+
+
+# ---------------------------------------------------------------------------
+# Feature engineering pipeline (used during training)
+# ---------------------------------------------------------------------------
 
 # Drop columns based on config.py list
 def drop_columns(X):
@@ -124,22 +133,6 @@ missing_handler = FunctionTransformer(handle_missing_values, feature_names_out='
 
 
 
-from sklearn.model_selection import train_test_split
-
-def prepare_train_test_split(train_df, test_df, label):
-    if test_df is None:
-        X = train_df
-        y = train_df[label]
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.2, stratify=y, random_state=42
-        )
-        return X, y, X_train, X_test, y_train, y_test, None
-    else:
-        X_train = train_df
-        y_train = train_df[label]
-        X_test = test_df if label in test_df.columns else test_df
-        y_test = test_df[label] if label in test_df.columns else None
-        return X, y, X_train, X_test, y_train, y_test, None
 
 
 
@@ -171,6 +164,10 @@ preprocessor = ColumnTransformer([
     ('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=False), onehot_cols),
     ('ordinal', OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1), ordinal_cols)
 ], remainder='passthrough')
+
+# ---------------------------------------------------------------------------
+# Model training utilities
+# ---------------------------------------------------------------------------
 
 models = {
     'dummy_classifier': DummyClassifier(strategy='stratified', random_state=42),
@@ -219,6 +216,9 @@ def train_and_predict_pipeline(name, X_train, y_train, X_test, y_test=None):
     return pipe, y_preds, y_probs
 
 
+# ---------------------------------------------------------------------------
+# Evaluation and analysis utilities
+# ---------------------------------------------------------------------------
 
 def evaluate_pipeline(name, data):
     X = data[0]
