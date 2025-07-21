@@ -1,19 +1,35 @@
 general:
   structure_type: single_file  # single_file or multi_file
-  file_one_path: ../data/course.csv
-  file_two_path: null
-  label: CourseCompletion
+  file_one_path: ../data/train.csv # train or main
+  file_two_path: ../data/test.csv # test or null
+  label: Personality
   primary_metric: f1
 
 preprocessing:
-  drop_features: [CourseCompletion, CompletionRate, UserID, DeviceType]
-  value_mappings: {}
-  type_coercion: {}
-  missing_handling: {}
+  drop_features: [Personality, id]
+  value_mappings:
+    Stage_fear:
+      'No': 0
+      'Yes': 1
+    Drained_after_socializing:
+      'No': 0
+      'Yes': 1
+    Personality:
+      Extrovert: 0
+      Introvert: 1
+  type_coercion:
+  missing_handling: # 'drop', 'mean', 'median', 'mode', 'prior'
+    Time_spent_Alone: median
+    Stage_fear: prior
+    Social_event_attendance: median
+    Going_outside: median
+    Drained_after_socializing: prior
+    Friends_circle_size: median
+    Post_frequency: mean
 
 encoding:
-  numerical_cols: [TimeSpentOnCourse, NumberOfVideosWatched, NumberOfQuizzesTaken, QuizScores]
-  onehot_cols: [CourseCategory]
+  numerical_cols: [Time_spent_Alone, Social_event_attendance, Going_outside, Friends_circle_size, Post_frequency]
+  onehot_cols: []
   ordinal_cols: []
 
 model_configs:
@@ -26,7 +42,7 @@ model_configs:
     search_type: grid  # Search method
     baseline: true
     param_grid:
-      model__C: [0.01, 0.1, 1, 10]  # Inverse of regularization strength
+      model__C: [0.01, 0.1]  # Inverse of regularization strength
       model__penalty: [l2]  # Which loss type is applied
       model__solver: [lbfgs]  # Algorithm used for optimization
 

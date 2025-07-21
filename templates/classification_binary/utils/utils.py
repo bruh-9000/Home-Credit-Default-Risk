@@ -34,6 +34,7 @@ with open(ROOT / "config.yaml", "r") as f:
     config = yaml.safe_load(f)
 
 # Access values from the config
+label = config["general"]["label"]
 primary_metric = config["general"]["primary_metric"]
 drop_features = config["preprocessing"]["drop_features"]
 value_mappings = config["preprocessing"]["value_mappings"]
@@ -64,6 +65,7 @@ from sklearn.metrics import (
 import shap
 import seaborn as sns
 from matplotlib import pyplot as plt
+import missingno as msno
 
 warnings.filterwarnings("ignore")
 np.random.seed(42)
@@ -105,6 +107,33 @@ def prepare_train_test_split(train_df, test_df, label):
 
 
 
+def show_categorical_uniques(df, limit=10):
+    for col in df.select_dtypes(include=["object", "category"]).columns:
+        uniques = df[col].unique()
+        print(f"{col} ({len(uniques)} unique): {uniques[:limit]}")
+
+
+
+def show_missing_data(df):
+    # Check missing data percentages per column
+    if df.isna().sum().sum() > 0:
+        missing_counts = df.isna().sum()
+        total_rows = len(df)
+        total_cols = df.shape[1]
+
+        # Low missing amounts (per column)
+        print('Missing values detected in:')
+        print(missing_counts[missing_counts > 0])
+
+        # Plot
+        msno.matrix(df, figsize=(8.5, 4), fontsize=10)
+        plt.title('Missing Data by Column')
+        plt.show()
+    else:
+        print("No missing data found!")
+
+
+
 # Feature engineering pipeline
 
 
@@ -120,7 +149,8 @@ dropper = FunctionTransformer(drop_columns, feature_names_out='one-to-one')
 def apply_mappings(X):
     X = X.copy()
     for col, mapping in value_mappings.items():
-        X[col] = X[col].map(mapping)
+        if col != label and col in X.columns:
+            X[col] = X[col].map(mapping)
     return X
 mapper = FunctionTransformer(apply_mappings, feature_names_out='one-to-one')
 
@@ -137,11 +167,30 @@ coercer = FunctionTransformer(coerce_types, feature_names_out='one-to-one')
 def handle_missing_values(X):
     X = X.copy()
     for col, strategy in missing_handling.items():
+        if col not in X.columns:
+            continue
         if strategy == 'drop':
             X = X.dropna(subset=[col])
+        elif strategy == 'mean':
+            if pd.api.types.is_numeric_dtype(X[col]):
+                X[col] = X[col].fillna(X[col].mean())
+        elif strategy == 'median':
+            if pd.api.types.is_numeric_dtype(X[col]):
+                X[col] = X[col].fillna(X[col].median())
+        elif strategy == 'mode':
+            mode_val = X[col].mode()
+            if not mode_val.empty:
+                X[col] = X[col].fillna(mode_val[0])
+        elif strategy == 'prior':
+            non_na = X[col].dropna()
+            if non_na.nunique() == 2:
+                probs = non_na.value_counts(normalize=True)
+                X[col] = X[col].apply(
+                    lambda x: np.random.choice(probs.index, p=probs.values) if pd.isna(x) else x
+                )
         else:
-            imputer = SimpleImputer(strategy=strategy)
-            X[[col]] = imputer.fit_transform(X[[col]])
+            raise ValueError(f"Unsupported missing value strategy: '{strategy}' for column '{col}'")
+        
     return X
 missing_handler = FunctionTransformer(handle_missing_values, feature_names_out='one-to-one')
 
@@ -191,7 +240,7 @@ models = {
 
 
 
-def train_and_predict_pipeline(name, X_train, y_train, X_test, y_test=None):
+def train_pipeline(name, X_train, y_train):
     config = model_configs.get(name, {})
     search_type = config.get('search_type')
     param_grid = config.get('param_grid', {})
@@ -225,10 +274,14 @@ def train_and_predict_pipeline(name, X_train, y_train, X_test, y_test=None):
         print(f'\n{name} - CV {primary_metric}: {scores.mean():.4f} ± {scores.std():.4f}')
         pipe.fit(X_train, y_train)
 
+    return pipe
+
+
+
+def predict_pipeline(pipe, X_test):
     y_preds = pipe.predict(X_test)
     y_probs = pipe.predict_proba(X_test)[:, 1] if hasattr(pipe.named_steps['model'], "predict_proba") else None
-
-    return pipe, y_preds, y_probs
+    return y_preds, y_probs
 
 
 
@@ -237,28 +290,50 @@ def train_and_predict_pipeline(name, X_train, y_train, X_test, y_test=None):
 
 
 def evaluate_pipeline(name, data):
-    X = data[0]
-    X_train = data[1]
-    y_train = data[2]
-    X_test = data[3]
-    y_test = data[4]
+    X_full, X_train, y_train, X_test, y_test = data
 
-    pipe, y_preds, y_probs = train_and_predict_pipeline(name, X_train, y_train, X_test, y_test)
+    # Get label mapping from config
+    label_mapping = value_mappings.get(label)
 
+    # Apply label mapping to y_train/y_test
+    if label_mapping:
+        y_train = y_train.map(label_mapping)
+
+        if y_test is not None:
+            y_test = y_test.map(label_mapping)
+
+    # Check whether we have test labels
+    has_test_labels = y_test is not None and not pd.isnull(y_test).all()
+
+    # Train the pipeline
+    pipe = train_pipeline(name, X_train, y_train)
+
+    # Always get train metrics
     y_train_preds = pipe.predict(X_train)
     model = pipe.named_steps['model']
 
     print(f'\n{name} - TRAIN METRICS:')
     train_metrics = get_analysis(y_train, y_train_preds)
 
-    print(f'\n{name} - TEST METRICS:')
-    test_metrics = get_analysis(y_test, y_preds)
+    # Predict and evaluate on test only if labels exist
+    if has_test_labels:
+        y_preds, y_probs = predict_pipeline(pipe, X_test)
+        print(f'\n{name} - TEST METRICS:')
+        test_metrics = get_analysis(y_test, y_preds)
 
-    if not model_configs.get(name, {}).get('baseline', False):
-        generate_graphs(pipe, model, X, y_test, y_preds, y_probs, name)
+        # Only generate graphs if not a baseline model
+        if not model_configs.get(name, {}).get('baseline', False):
+            generate_graphs(pipe, model, X_full, y_test, y_preds, y_probs, name)
+    else:
+        print(f'\n{name} - SKIPPING TEST EVALUATION (no test labels)')
+        y_preds = y_probs = test_metrics = None
+
     joblib.dump(pipe, SAVE_DIR / f"{name}_pipeline.pkl")
 
-    return pipe, test_metrics
+    output_metrics = test_metrics
+    if (output_metrics == None):
+        output_metrics = train_metrics
+    return pipe, output_metrics
 
 
 
