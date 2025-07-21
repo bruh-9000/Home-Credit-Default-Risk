@@ -1,9 +1,11 @@
 # Core libraries
 import warnings
-import importlib
+import numpy as np
+import os
+import joblib
+import yaml
 
 import pandas as pd
-import utils.config as config
 from IPython.display import display, Markdown
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import (
@@ -19,18 +21,31 @@ from sklearn.model_selection import (
     StratifiedKFold,
     GridSearchCV,
     RandomizedSearchCV,
+    cross_val_score,
 )
-from utils.config import (
-    primary_metric,
-    drop_features,
-    value_mappings,
-    type_coercion,
-    missing_handling,
-    numerical_cols,
-    onehot_cols,
-    ordinal_cols,
-    model_configs,
-)
+
+from pathlib import Path
+SAVE_DIR = Path(__file__).resolve().parent / "saved"
+SAVE_DIR.mkdir(parents=True, exist_ok=True)
+
+# Load config.yaml
+ROOT = Path(__file__).resolve().parent.parent  # goes to classification_binary/
+with open(ROOT / "config.yaml", "r") as f:
+    config = yaml.safe_load(f)
+
+# Access values from the config
+primary_metric = config["general"]["primary_metric"]
+drop_features = config["preprocessing"]["drop_features"]
+value_mappings = config["preprocessing"]["value_mappings"]
+type_coercion = config["preprocessing"]["type_coercion"]
+missing_handling = config["preprocessing"]["missing_handling"]
+
+numerical_cols = config["encoding"]["numerical_cols"]
+onehot_cols = config["encoding"]["onehot_cols"]
+ordinal_cols = config["encoding"]["ordinal_cols"]
+
+model_configs = config["model_configs"]
+
 from sklearn.dummy import DummyClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
@@ -50,8 +65,8 @@ import shap
 import seaborn as sns
 from matplotlib import pyplot as plt
 
-importlib.reload(config)
 warnings.filterwarnings("ignore")
+np.random.seed(42)
 
 
 
@@ -74,19 +89,19 @@ def dedup(df):
 
 
 def prepare_train_test_split(train_df, test_df, label):
+    X = train_df
+    y = train_df[label]
+    
     if test_df is None:
-        X = train_df
-        y = train_df[label]
         X_train, X_test, y_train, y_test = train_test_split(
             X, y, test_size=0.2, stratify=y, random_state=42
         )
-        return X, y, X_train, X_test, y_train, y_test, None
     else:
         X_train = train_df
         y_train = train_df[label]
         X_test = test_df if label in test_df.columns else test_df
         y_test = test_df[label] if label in test_df.columns else None
-        return X, y, X_train, X_test, y_train, y_test, None
+    return X, y, X_train, X_test, y_train, y_test
 
 
 
@@ -206,6 +221,8 @@ def train_and_predict_pipeline(name, X_train, y_train, X_test, y_test=None):
         print(search.best_params_)
 
     else:
+        scores = cross_val_score(pipe, X_train, y_train, cv=skf, scoring=primary_metric, n_jobs=-1)
+        print(f'\n{name} - CV {primary_metric}: {scores.mean():.4f} ± {scores.std():.4f}')
         pipe.fit(X_train, y_train)
 
     y_preds = pipe.predict(X_test)
@@ -237,7 +254,9 @@ def evaluate_pipeline(name, data):
     print(f'\n{name} - TEST METRICS:')
     test_metrics = get_analysis(y_test, y_preds)
 
-    generate_graphs(pipe, model, X, y_test, y_preds, y_probs, name)
+    if not model_configs.get(name, {}).get('baseline', False):
+        generate_graphs(pipe, model, X, y_test, y_preds, y_probs, name)
+    joblib.dump(pipe, SAVE_DIR / f"{name}_pipeline.pkl")
 
     return pipe, test_metrics
 
@@ -289,8 +308,7 @@ def generate_graphs(pipeline, model, X, y_test, y_pred, y_probs, name):
     plt.tight_layout()
     plt.show()
 
-    if not model_configs.get(name, {}).get('baseline', False):
-        plot_shap_summary(pipeline, model, X)
+    plot_shap_summary(pipeline, model, X)
 
 
 
