@@ -54,19 +54,18 @@ importlib.reload(config)
 warnings.filterwarnings("ignore")
 
 
-# ---------------------------------------------------------------------------
-# Data preparation utilities (used in `0_prep.ipynb`)
-# ---------------------------------------------------------------------------
+
+# Data preparation utilities
+
+
 
 def load_data(file_one, file_two=None):
-    """Load one or two CSV files into Pandas DataFrames."""
     if file_two is None:
         return pd.read_csv(file_one), None
     return pd.read_csv(file_one), pd.read_csv(file_two)
 
 
 def dedup(df):
-    """Drop duplicate rows and log how many were removed."""
     num_dupes = df.duplicated().sum()
     if num_dupes > 0:
         print(f"Successfully deleted {num_dupes} duplicated examples.")
@@ -91,9 +90,9 @@ def prepare_train_test_split(train_df, test_df, label):
 
 
 
-# ---------------------------------------------------------------------------
-# Feature engineering pipeline (used during training)
-# ---------------------------------------------------------------------------
+# Feature engineering pipeline
+
+
 
 # Drop columns based on config.py list
 def drop_columns(X):
@@ -133,9 +132,6 @@ missing_handler = FunctionTransformer(handle_missing_values, feature_names_out='
 
 
 
-
-
-
 # Bound outliers 1.5x outside IQR
 def handle_outliers(X):
     X = X.copy()
@@ -165,9 +161,11 @@ preprocessor = ColumnTransformer([
     ('ordinal', OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1), ordinal_cols)
 ], remainder='passthrough')
 
-# ---------------------------------------------------------------------------
+
+
 # Model training utilities
-# ---------------------------------------------------------------------------
+
+
 
 models = {
     'dummy_classifier': DummyClassifier(strategy='stratified', random_state=42),
@@ -216,9 +214,10 @@ def train_and_predict_pipeline(name, X_train, y_train, X_test, y_test=None):
     return pipe, y_preds, y_probs
 
 
-# ---------------------------------------------------------------------------
+
 # Evaluation and analysis utilities
-# ---------------------------------------------------------------------------
+
+
 
 def evaluate_pipeline(name, data):
     X = data[0]
