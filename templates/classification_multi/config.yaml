@@ -1,14 +1,14 @@
 general:
   file_one_path: ../data/train.csv # train or main
   file_two_path: ../data/test.csv # test or null
-  label: Personality
+  label: Label
   primary_metric: f1_macro
 
 preprocessing:
   drop_features: []
-  value_mappings:
-  type_coercion:
-  missing_handling: # 'drop', 'mean', 'median', 'mode', 'prior'
+  value_mappings: {}
+  type_coercion: {}
+  missing_handling: {} # 'drop', 'mean', 'median', 'mode', 'prior'
 
 encoding:
   numerical_scale_cols: []

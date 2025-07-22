@@ -175,6 +175,9 @@ coercer = FunctionTransformer(coerce_types, feature_names_out='one-to-one')
 
 # Perform actions based on config.py setting for each feature
 def handle_missing_values(X):
+    if missing_handling is None:
+        return X
+    
     X = X.copy()
     for col, strategy in missing_handling.items():
         if col not in X.columns:
@@ -386,7 +389,7 @@ Recall (Macro): {recall:.2%}
 
     values = {
         'Accuracy': accuracy,
-        'F1': f1,
+        'F1_macro': f1,
         'Precision': precision,
         'Recall': recall,
     }
