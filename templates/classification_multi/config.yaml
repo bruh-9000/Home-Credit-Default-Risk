@@ -1,9 +1,9 @@
 general:
   file_one_path: ../data/train.csv # train or main
-  file_two_path: ../data/test.csv # test or null
+  file_two_path: null # test or null
   label: Label
   primary_metric: f1_macro
-  mode: text # or tabular
+  mode: tabular # or tabular
 
 preprocessing:
   drop_features: []
@@ -12,7 +12,7 @@ preprocessing:
   missing_handling: {} # 'drop', 'mean', 'median', 'mode', 'prior'
 
 encoding:
-  text_column: Text
+  text_column: 
   numerical_scale_cols: []
   onehot_cols: []
   ordinal_cols: []

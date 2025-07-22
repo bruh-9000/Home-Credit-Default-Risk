@@ -72,10 +72,8 @@ import missingno as msno
 
 
 
-def load_data(file_one, file_two=None):
-    if file_two is None:
-        return pd.read_csv(file_one), None
-    return pd.read_csv(file_one), pd.read_csv(file_two)
+def load_data(file_one, file_two):
+    return pd.read_csv(file_one), pd.read_csv(file_two) if file_two else None
 
 
 def dedup(df):
@@ -98,19 +96,15 @@ def prepare_train_test_split(train_df, test_df, label):
         X_val = y_val = None
 
     else:
-        # Case 2 or 3: Two files
-        X_train = train_df
-        y_train = train_df[label]
+        X_test = test_df
 
-        # If test has labels, use as test set
+        # Case 2: If test has labels, use as test set
         if label in test_df.columns:
-            X_test = test_df
             y_test = test_df[label]
             X_val = y_val = None
 
-        # If test has NO labels, make val set from train
+        # Case 3: If test has NO labels, make val set from train
         else:
-            X_test = test_df
             y_test = None
 
             X_train, X_val, y_train, y_val = train_test_split(
@@ -132,8 +126,6 @@ def show_missing_data(df):
     # Check missing data percentages per column
     if df.isna().sum().sum() > 0:
         missing_counts = df.isna().sum()
-        total_rows = len(df)
-        total_cols = df.shape[1]
 
         # Low missing amounts (per column)
         print('Missing values detected in:')
@@ -162,7 +154,6 @@ dropper = FunctionTransformer(drop_columns, feature_names_out='one-to-one')
 
 # Map values for features (e.g., 'yes' -> 1, 'no' -> 0)
 def apply_mappings(X):
-    X = X.copy()
     for col, mapping in value_mappings.items():
         if col != label and col in X.columns:
             X[col] = X[col].map(mapping)

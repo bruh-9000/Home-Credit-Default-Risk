@@ -12,8 +12,7 @@ from sklearn.preprocessing import (
     StandardScaler,
     OneHotEncoder,
     OrdinalEncoder,
-    FunctionTransformer,
-    LabelEncoder
+    FunctionTransformer
 )
 from sklearn.pipeline import Pipeline
 from sklearn.model_selection import (
@@ -56,7 +55,7 @@ from sklearn.ensemble import RandomForestClassifier
 from lightgbm import LGBMClassifier
 from sklearn.metrics import (
     accuracy_score,
-    confusion_matrix,
+    average_precision_score,
     f1_score,
     precision_score,
     recall_score
@@ -88,12 +87,11 @@ def dedup(df):
     return df
 
 
-def prepare_train_test_split(train_df, test_df, label):
+def prepare_train_test_split(train_df, test_df, label, le):
     X = train_df
-    le = LabelEncoder()
-    y = le.fit_transform(train_df[label])
+    y = le.transform(train_df[label])
     
-    # Now split or prepare as before
+    # Case 1: Only one file (split into train/test)
     if test_df is None:
         X_train, X_test, y_train, y_test = train_test_split(
             X, y, test_size=0.2, stratify=y, random_state=42
@@ -101,22 +99,23 @@ def prepare_train_test_split(train_df, test_df, label):
         X_val = y_val = None
 
     else:
+        X_test = test_df
         X_train = train_df
-        y_train = le.transform(train_df[label])  # encoded
+        y_train = le.transform(train_df[label])
 
+        # Case 2: If test has labels, use as test set
         if label in test_df.columns:
-            X_test = test_df
             y_test = le.transform(test_df[label])
             X_val = y_val = None
+
+        # Case 3: If test has NO labels, make val set from train
         else:
-            X_test = test_df
             y_test = None
 
             X_train, X_val, y_train, y_val = train_test_split(
                 X_train, y_train, test_size=0.2, stratify=y_train, random_state=42
             )
 
-    joblib.dump(le, SAVE_DIR / "label_encoder.pkl")
     return X, y, X_train, X_test, y_train, y_test, X_val, y_val
 
 
@@ -162,7 +161,6 @@ dropper = FunctionTransformer(drop_columns, feature_names_out='one-to-one')
 
 # Map values for features (e.g., 'yes' -> 1, 'no' -> 0)
 def apply_mappings(X):
-    X = X.copy()
     for col, mapping in value_mappings.items():
         if col != label and col in X.columns:
             X[col] = X[col].map(mapping)
@@ -240,7 +238,7 @@ cleaning_pipeline = Pipeline([
 def build_preprocessor():
     if mode == "text":
         return ColumnTransformer([
-            ("tfidf", TfidfVectorizer(max_features=10000, stop_words="english"), text_column)
+            ("tfidf", TfidfVectorizer(max_features=2000, stop_words="english"), text_column)
         ])
     else:
         return ColumnTransformer([
@@ -305,9 +303,10 @@ def train_pipeline(name, X_train, y_train):
 def predict_pipeline(pipe, X_test):
     y_preds = pipe.predict(X_test)
 
-    # Decode class numbers back to original strings
+    # Decode only if needed
     le = joblib.load(SAVE_DIR / "label_encoder.pkl")
-    y_preds = le.inverse_transform(y_preds)
+    if np.issubdtype(y_preds.dtype, np.integer):
+        y_preds = le.inverse_transform(y_preds)
 
     if hasattr(pipe.named_steps['model'], "predict_proba"):
         y_probs = pipe.predict_proba(X_test)
@@ -336,47 +335,45 @@ def evaluate_pipeline(name, data):
         if y_val is not None:
             y_val = y_val.map(label_mapping)
 
-    # Check whether we have test labels
+    # Load label encoder once
+    le = joblib.load(SAVE_DIR / "label_encoder.pkl")
+
+    # If labels are integers, inverse transform for binarization
+    if isinstance(y_train[0], (int, np.integer)):
+        y_train = le.inverse_transform(y_train)
+
     has_test_labels = y_test is not None and not pd.isnull(y_test).all()
 
-    # Train the pipeline
+    # Train pipeline
     pipe = train_pipeline(name, X_train, y_train)
-    model = pipe.named_steps['model']
 
-    # Train metrics
+    # TRAIN
     y_train_preds = pipe.predict(X_train)
+    y_train_probs = pipe.predict_proba(X_train) if hasattr(pipe.named_steps['model'], 'predict_proba') else None
     print(f'\n{name} - TRAIN METRICS:')
-    train_metrics = get_analysis(y_train, y_train_preds)
+    train_metrics = get_analysis(y_train, y_train_preds, y_train_probs)
 
     output_metrics = train_metrics
-    y_preds = y_probs = None
 
-    # Use test set if labels exist
+    # TEST
     if has_test_labels:
-        y_preds, y_probs = predict_pipeline(pipe, X_test)
-        print(f'\n{name} - TEST METRICS:')
-
-        le = joblib.load(SAVE_DIR / "label_encoder.pkl")
-        if isinstance(y_test, np.ndarray) and np.issubdtype(y_test.dtype, np.integer):
+        if isinstance(y_test[0], (int, np.integer)):
             y_test = le.inverse_transform(y_test)
 
-        test_metrics = get_analysis(y_test, y_preds)
+        y_preds, y_probs = predict_pipeline(pipe, X_test)
+        print(f'\n{name} - TEST METRICS:')
+        test_metrics = get_analysis(y_test, y_preds, y_probs)
         output_metrics = test_metrics
 
-        if not model_configs.get(name, {}).get('baseline', False):
-            generate_graphs(pipe, model, X_full, y_test, y_preds, y_probs, name)
-
-    # Otherwise fall back to validation set
+    # VALIDATION
     elif y_val is not None:
-        y_val = le.inverse_transform(y_val)
+        if isinstance(y_test[0], (int, np.integer)):
+            y_val = le.inverse_transform(y_val)
+
         y_val_preds, y_val_probs = predict_pipeline(pipe, X_val)
         print(f'\n{name} - VALIDATION METRICS:')
-        val_metrics = get_analysis(y_val, y_val_preds)
+        val_metrics = get_analysis(y_val, y_val_preds, y_val_probs)
         output_metrics = val_metrics
-
-        if not model_configs.get(name, {}).get('baseline', False):
-            generate_graphs(pipe, model, X_full, y_val, y_val_preds, y_val_probs, name)
-
     else:
         print(f'\n{name} - SKIPPING TEST & VALIDATION (no labels)')
 
@@ -385,17 +382,41 @@ def evaluate_pipeline(name, data):
 
 
 
-def get_analysis(y_true, y_pred):
+def mapk(y_true, y_pred_probs, k=3):
+    le = joblib.load(SAVE_DIR / "label_encoder.pkl")
+    labels = le.classes_
+    
+    total = 0.0
+    for true, prob_row in zip(y_true, y_pred_probs):
+        # Top-k predicted class indices
+        top_k = np.argsort(prob_row)[::-1][:k]
+        pred_labels = labels[top_k]
+
+        if true in pred_labels:
+            rank = list(pred_labels).index(true) + 1  # 1-based
+            total += 1.0 / rank
+    return total / len(y_true)
+
+
+
+def get_analysis(y_true, y_pred, y_probs):
     accuracy = accuracy_score(y_true, y_pred)
-    f1 = f1_score(y_true, y_pred, average='macro')  # or 'weighted'
+    f1 = f1_score(y_true, y_pred, average='macro')
     recall = recall_score(y_true, y_pred, average='macro')
     precision = precision_score(y_true, y_pred, average='macro')
+
+    #Compute MAP
+    if y_probs is not None:
+        map_score = mapk(y_true, y_probs, k=3)
+    else:
+        map_score = None
 
     report = f'''
 Accuracy: {accuracy:.2%}
 F1 Score (Macro): {f1:.2%}
 Precision (Macro): {precision:.2%}
 Recall (Macro): {recall:.2%}
+Mean Avg Precision: {f"{map_score:.2%}" if map_score is not None else "N/A"}
 '''
 
     values = {
@@ -403,53 +424,11 @@ Recall (Macro): {recall:.2%}
         'F1_macro': f1,
         'Precision': precision,
         'Recall': recall,
+        'MAP': map_score
     }
 
     print(report)
     return values
-
-
-
-def generate_graphs(pipeline, model, X, y_test, y_pred, y_probs, name):
-    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
-
-    plot_confusion_matrix(y_test, y_pred, ax=axes[0])
-
-    plt.tight_layout()
-    plt.show()
-
-    plot_shap_summary(pipeline, model, X)
-
-
-
-def plot_confusion_matrix(y_test, y_pred, ax=None):
-    le = joblib.load(SAVE_DIR / "label_encoder.pkl")
-    labels = le.classes_
-
-    cm = confusion_matrix(y_test, y_pred, labels=labels)
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(5, 4))
-    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=ax)
-    ax.set_title('Confusion Matrix')
-    ax.set_xlabel('Predicted')
-    ax.set_ylabel('Actual')
-    ax.set_xticklabels(labels, rotation=45)
-    ax.set_yticklabels(labels, rotation=0)
-
-
-
-def plot_shap_summary(pipeline, model, X, num_samples=100):
-    X_cleaned = pipeline.named_steps['cleaning'].transform(X)
-    X_transformed = pipeline.named_steps['preprocessing'].transform(X_cleaned)
-    features = pipeline.named_steps['preprocessing'].get_feature_names_out()
-    X_sample = pd.DataFrame(X_transformed[:num_samples], columns=features)
-
-    explainer = shap.TreeExplainer(model, feature_perturbation='interventional')
-    shap_values = explainer.shap_values(X_sample)
-    if isinstance(shap_values, list):
-        shap_values = shap_values[1]
-
-    shap.summary_plot(shap_values, X_sample, feature_names=features, plot_type='bar', plot_size=[8,4])
 
 
 
