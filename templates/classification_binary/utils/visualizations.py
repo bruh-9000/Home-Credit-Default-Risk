@@ -84,8 +84,14 @@ def plot_scatter(df, x, y, title='Scatter Plot', xlabel=None, ylabel=None):
 
 
 
-def plot_correlation_heatmap(corr_matrix, title='Feature Correlation Heatmap'):
+def plot_correlation_heatmap(corr_matrix, abs=False):
+    if abs:
+        corr_matrix = corr_matrix.abs()
+        cmap = 'Reds'
+    else:
+        cmap = 'coolwarm'
+
     plt.figure(figsize=(8, 6))
-    sns.heatmap(corr_matrix, annot=True, fmt='.2f', cmap='coolwarm')
-    plt.title(title)
+    sns.heatmap(corr_matrix, annot=True, fmt='.2f', cmap=cmap)
+    plt.title('Feature Correlation Heatmap' + (' (Absolute)' if abs else ''))
     plt.show()
