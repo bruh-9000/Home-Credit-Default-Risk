@@ -35,12 +35,15 @@ with open(ROOT / "config.yaml", "r") as f:
 
 # Access values from the config
 label = config["general"]["label"]
+mode = config["general"]["mode"]
+
 primary_metric = config["general"]["primary_metric"]
 drop_features = config["preprocessing"]["drop_features"]
 value_mappings = config["preprocessing"]["value_mappings"]
 type_coercion = config["preprocessing"]["type_coercion"]
 missing_handling = config["preprocessing"]["missing_handling"]
 
+text_column = config["encoding"]["text_column"]
 numerical_scale_cols = config["encoding"]["numerical_scale_cols"]
 onehot_cols = config["encoding"]["onehot_cols"]
 ordinal_cols = config["encoding"]["ordinal_cols"]
@@ -58,6 +61,8 @@ from sklearn.metrics import (
     precision_score,
     recall_score
 )
+from sklearn.feature_extraction.text import TfidfVectorizer
+
 import shap
 import seaborn as sns
 from matplotlib import pyplot as plt
@@ -232,11 +237,17 @@ cleaning_pipeline = Pipeline([
     ('handle_outliers', outlier_handler)
 ])
 
-preprocessor = ColumnTransformer([
-    ('num', StandardScaler(), numerical_scale_cols),
-    ('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=False), onehot_cols),
-    ('ordinal', OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1), ordinal_cols)
-], remainder='passthrough')
+def build_preprocessor():
+    if mode == "text":
+        return ColumnTransformer([
+            ("tfidf", TfidfVectorizer(max_features=10000, stop_words="english"), text_column)
+        ])
+    else:
+        return ColumnTransformer([
+            ('num', StandardScaler(), numerical_scale_cols),
+            ('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=False), onehot_cols),
+            ('ordinal', OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1), ordinal_cols)
+        ], remainder='passthrough')
 
 
 
@@ -263,7 +274,7 @@ def train_pipeline(name, X_train, y_train):
 
     pipe = Pipeline([
         ('cleaning', cleaning_pipeline),
-        ('preprocessing', preprocessor),
+        ('preprocessing', build_preprocessor()),
         ('model', models[name])
     ])
 
