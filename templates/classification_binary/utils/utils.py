@@ -97,6 +97,8 @@ def prepare_train_test_split(train_df, test_df, label):
 
     else:
         X_test = test_df
+        X_train = train_df
+        y_train = y
 
         # Case 2: If test has labels, use as test set
         if label in test_df.columns:
