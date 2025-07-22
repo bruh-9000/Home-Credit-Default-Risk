@@ -13,6 +13,7 @@ from sklearn.preprocessing import (
     OneHotEncoder,
     OrdinalEncoder,
     FunctionTransformer,
+    LabelEncoder
 )
 from sklearn.pipeline import Pipeline
 from sklearn.model_selection import (
@@ -52,14 +53,10 @@ from sklearn.ensemble import RandomForestClassifier
 from lightgbm import LGBMClassifier
 from sklearn.metrics import (
     accuracy_score,
-    average_precision_score,
     confusion_matrix,
     f1_score,
     precision_score,
-    recall_score,
-    roc_auc_score,
-    roc_curve,
-    precision_recall_curve,
+    recall_score
 )
 import shap
 import seaborn as sns
@@ -88,9 +85,10 @@ def dedup(df):
 
 def prepare_train_test_split(train_df, test_df, label):
     X = train_df
-    y = train_df[label]
-
-    # Case 1: Only one file (split into train/test)
+    le = LabelEncoder()
+    y = le.fit_transform(train_df[label])
+    
+    # Now split or prepare as before
     if test_df is None:
         X_train, X_test, y_train, y_test = train_test_split(
             X, y, test_size=0.2, stratify=y, random_state=42
@@ -98,17 +96,13 @@ def prepare_train_test_split(train_df, test_df, label):
         X_val = y_val = None
 
     else:
-        # Case 2 or 3: Two files
         X_train = train_df
-        y_train = train_df[label]
+        y_train = le.transform(train_df[label])  # encoded
 
-        # If test has labels, use as test set
         if label in test_df.columns:
             X_test = test_df
-            y_test = test_df[label]
+            y_test = le.transform(test_df[label])
             X_val = y_val = None
-
-        # If test has NO labels, make val set from train
         else:
             X_test = test_df
             y_test = None
@@ -117,6 +111,7 @@ def prepare_train_test_split(train_df, test_df, label):
                 X_train, y_train, test_size=0.2, stratify=y_train, random_state=42
             )
 
+    joblib.dump(le, SAVE_DIR / "label_encoder.pkl")
     return X, y, X_train, X_test, y_train, y_test, X_val, y_val
 
 
@@ -295,7 +290,16 @@ def train_pipeline(name, X_train, y_train):
 
 def predict_pipeline(pipe, X_test):
     y_preds = pipe.predict(X_test)
-    y_probs = pipe.predict_proba(X_test)[:, 1] if hasattr(pipe.named_steps['model'], "predict_proba") else None
+
+    # Decode class numbers back to original strings
+    le = joblib.load(SAVE_DIR / "label_encoder.pkl")
+    y_preds = le.inverse_transform(y_preds)
+
+    if hasattr(pipe.named_steps['model'], "predict_proba"):
+        y_probs = pipe.predict_proba(X_test)
+    else:
+        y_probs = None
+
     return y_preds, y_probs
 
 
@@ -337,6 +341,11 @@ def evaluate_pipeline(name, data):
     if has_test_labels:
         y_preds, y_probs = predict_pipeline(pipe, X_test)
         print(f'\n{name} - TEST METRICS:')
+
+        le = joblib.load(SAVE_DIR / "label_encoder.pkl")
+        if isinstance(y_test, np.ndarray) and np.issubdtype(y_test.dtype, np.integer):
+            y_test = le.inverse_transform(y_test)
+
         test_metrics = get_analysis(y_test, y_preds)
         output_metrics = test_metrics
 
@@ -345,6 +354,7 @@ def evaluate_pipeline(name, data):
 
     # Otherwise fall back to validation set
     elif y_val is not None:
+        y_val = le.inverse_transform(y_val)
         y_val_preds, y_val_probs = predict_pipeline(pipe, X_val)
         print(f'\n{name} - VALIDATION METRICS:')
         val_metrics = get_analysis(y_val, y_val_preds)
@@ -361,38 +371,27 @@ def evaluate_pipeline(name, data):
 
 
 
-def get_analysis(y_test, y_preds):
-    tn, fp, fn, tp = confusion_matrix(y_test, y_preds).ravel()
-    accuracy = accuracy_score(y_test, y_preds)
-    f1 = f1_score(y_test, y_preds)
-    recall = recall_score(y_test, y_preds)
-    precision = precision_score(y_test, y_preds)
-    specificity = tn / (tn + fp)
-    fpr = fp / (fp + tn)
-    fnr = fn / (fn + tp)
+def get_analysis(y_true, y_pred):
+    accuracy = accuracy_score(y_true, y_pred)
+    f1 = f1_score(y_true, y_pred, average='macro')  # or 'weighted'
+    recall = recall_score(y_true, y_pred, average='macro')
+    precision = precision_score(y_true, y_pred, average='macro')
 
     report = f'''
 Accuracy: {accuracy:.2%}
-F1 Score: {f1:.2%}
-Precision: {precision:.2%}
-True Positive Rate (Recall): {recall:.2%}
-True Negative Rate (Specificity): {specificity:.2%}
-False Positive Rate: {fpr:.2%}
-False Negative Rate: {fnr:.2%}
+F1 Score (Macro): {f1:.2%}
+Precision (Macro): {precision:.2%}
+Recall (Macro): {recall:.2%}
 '''
-    
+
     values = {
         'Accuracy': accuracy,
         'F1': f1,
         'Precision': precision,
-        'Recall (TPR)': recall,
-        'Specificity (TNR)': specificity,
-        'FPR': fpr,
-        'FNR': fnr
+        'Recall': recall,
     }
 
     print(report)
-
     return values
 
 
@@ -401,8 +400,6 @@ def generate_graphs(pipeline, model, X, y_test, y_pred, y_probs, name):
     fig, axes = plt.subplots(1, 3, figsize=(18, 5))
 
     plot_confusion_matrix(y_test, y_pred, ax=axes[0])
-    plot_roc_curve(y_test, y_probs, ax=axes[1])
-    plot_pr_curve(y_test, y_probs, ax=axes[2])
 
     plt.tight_layout()
     plt.show()
@@ -411,45 +408,19 @@ def generate_graphs(pipeline, model, X, y_test, y_pred, y_probs, name):
 
 
 
-def plot_confusion_matrix(y_test, y_pred, labels=['Negative', 'Positive'], ax=None):
-    cm = confusion_matrix(y_test, y_pred)
+def plot_confusion_matrix(y_test, y_pred, ax=None):
+    le = joblib.load(SAVE_DIR / "label_encoder.pkl")
+    labels = le.classes_
+
+    cm = confusion_matrix(y_test, y_pred, labels=labels)
     if ax is None:
-        fig, ax = plt.subplots(figsize=(4, 4))
+        fig, ax = plt.subplots(figsize=(5, 4))
     sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=ax)
     ax.set_title('Confusion Matrix')
     ax.set_xlabel('Predicted')
     ax.set_ylabel('Actual')
-    ax.set_xticklabels(labels)
-    ax.set_yticklabels(labels)
-
-
-
-def plot_roc_curve(y_test, y_probs, ax=None):
-    fpr, tpr, _ = roc_curve(y_test, y_probs)
-    auc = roc_auc_score(y_test, y_probs)
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(4, 4))
-    ax.plot(fpr, tpr, label=f'AUC = {auc:.4f}')
-    ax.plot([0, 1], [0, 1], linestyle='--', color='gray')
-    ax.set_title('ROC Curve')
-    ax.set_xlabel('False Positive Rate')
-    ax.set_ylabel('True Positive Rate')
-    ax.legend()
-    ax.grid(True)
-
-
-
-def plot_pr_curve(y_test, y_probs, ax=None):
-    precision, recall, _ = precision_recall_curve(y_test, y_probs)
-    avg_precision = average_precision_score(y_test, y_probs)
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(4, 4))
-    ax.plot(recall, precision, label=f'Avg Precision = {avg_precision:.4f}')
-    ax.set_title('Precision-Recall Curve')
-    ax.set_xlabel('Recall')
-    ax.set_ylabel('Precision')
-    ax.legend()
-    ax.grid(True)
+    ax.set_xticklabels(labels, rotation=45)
+    ax.set_yticklabels(labels, rotation=0)
 
 
 
