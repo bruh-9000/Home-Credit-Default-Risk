@@ -1,7 +1,7 @@
 # Core libraries
 import warnings
+warnings.filterwarnings("ignore")
 import numpy as np
-import os
 import joblib
 import yaml
 
@@ -14,7 +14,6 @@ from sklearn.preprocessing import (
     OrdinalEncoder,
     FunctionTransformer,
 )
-from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
 from sklearn.model_selection import (
     train_test_split,
@@ -25,7 +24,7 @@ from sklearn.model_selection import (
 )
 
 from pathlib import Path
-SAVE_DIR = Path(__file__).resolve().parent / "saved"
+SAVE_DIR = Path(__file__).resolve().parent.parent / "saved"
 SAVE_DIR.mkdir(parents=True, exist_ok=True)
 
 # Load config.yaml
@@ -41,7 +40,7 @@ value_mappings = config["preprocessing"]["value_mappings"]
 type_coercion = config["preprocessing"]["type_coercion"]
 missing_handling = config["preprocessing"]["missing_handling"]
 
-numerical_cols = config["encoding"]["numerical_cols"]
+numerical_scale_cols = config["encoding"]["numerical_scale_cols"]
 onehot_cols = config["encoding"]["onehot_cols"]
 ordinal_cols = config["encoding"]["ordinal_cols"]
 
@@ -67,9 +66,6 @@ import seaborn as sns
 from matplotlib import pyplot as plt
 import missingno as msno
 
-warnings.filterwarnings("ignore")
-np.random.seed(42)
-
 
 
 # Data preparation utilities
@@ -93,17 +89,35 @@ def dedup(df):
 def prepare_train_test_split(train_df, test_df, label):
     X = train_df
     y = train_df[label]
-    
+
+    # Case 1: Only one file (split into train/test)
     if test_df is None:
         X_train, X_test, y_train, y_test = train_test_split(
             X, y, test_size=0.2, stratify=y, random_state=42
         )
+        X_val = y_val = None
+
     else:
+        # Case 2 or 3: Two files
         X_train = train_df
         y_train = train_df[label]
-        X_test = test_df if label in test_df.columns else test_df
-        y_test = test_df[label] if label in test_df.columns else None
-    return X, y, X_train, X_test, y_train, y_test
+
+        # If test has labels, use as test set
+        if label in test_df.columns:
+            X_test = test_df
+            y_test = test_df[label]
+            X_val = y_val = None
+
+        # If test has NO labels, make val set from train
+        else:
+            X_test = test_df
+            y_test = None
+
+            X_train, X_val, y_train, y_val = train_test_split(
+                X_train, y_train, test_size=0.2, stratify=y_train, random_state=42
+            )
+
+    return X, y, X_train, X_test, y_train, y_test, X_val, y_val
 
 
 
@@ -140,7 +154,8 @@ def show_missing_data(df):
 
 # Drop columns based on config.py list
 def drop_columns(X):
-    return X.drop(columns=drop_features)
+    existing = [col for col in drop_features if col in X.columns]
+    return X.drop(columns=existing)
 dropper = FunctionTransformer(drop_columns, feature_names_out='one-to-one')
 
 
@@ -220,7 +235,7 @@ cleaning_pipeline = Pipeline([
 ])
 
 preprocessor = ColumnTransformer([
-    ('num', StandardScaler(), numerical_cols),
+    ('num', StandardScaler(), numerical_scale_cols),
     ('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=False), onehot_cols),
     ('ordinal', OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1), ordinal_cols)
 ], remainder='passthrough')
@@ -290,49 +305,58 @@ def predict_pipeline(pipe, X_test):
 
 
 def evaluate_pipeline(name, data):
-    X_full, X_train, y_train, X_test, y_test = data
+    X_full, X_train, y_train, X_test, y_test, X_val, y_val = data
 
     # Get label mapping from config
     label_mapping = value_mappings.get(label)
 
-    # Apply label mapping to y_train/y_test
+    # Apply label mapping to y_train/y_test/y_val
     if label_mapping:
         y_train = y_train.map(label_mapping)
-
         if y_test is not None:
             y_test = y_test.map(label_mapping)
+        if y_val is not None:
+            y_val = y_val.map(label_mapping)
 
     # Check whether we have test labels
     has_test_labels = y_test is not None and not pd.isnull(y_test).all()
 
     # Train the pipeline
     pipe = train_pipeline(name, X_train, y_train)
-
-    # Always get train metrics
-    y_train_preds = pipe.predict(X_train)
     model = pipe.named_steps['model']
 
+    # Train metrics
+    y_train_preds = pipe.predict(X_train)
     print(f'\n{name} - TRAIN METRICS:')
     train_metrics = get_analysis(y_train, y_train_preds)
 
-    # Predict and evaluate on test only if labels exist
+    output_metrics = train_metrics
+    y_preds = y_probs = None
+
+    # Use test set if labels exist
     if has_test_labels:
         y_preds, y_probs = predict_pipeline(pipe, X_test)
         print(f'\n{name} - TEST METRICS:')
         test_metrics = get_analysis(y_test, y_preds)
+        output_metrics = test_metrics
 
-        # Only generate graphs if not a baseline model
         if not model_configs.get(name, {}).get('baseline', False):
             generate_graphs(pipe, model, X_full, y_test, y_preds, y_probs, name)
+
+    # Otherwise fall back to validation set
+    elif y_val is not None:
+        y_val_preds, y_val_probs = predict_pipeline(pipe, X_val)
+        print(f'\n{name} - VALIDATION METRICS:')
+        val_metrics = get_analysis(y_val, y_val_preds)
+        output_metrics = val_metrics
+
+        if not model_configs.get(name, {}).get('baseline', False):
+            generate_graphs(pipe, model, X_full, y_val, y_val_preds, y_val_probs, name)
+
     else:
-        print(f'\n{name} - SKIPPING TEST EVALUATION (no test labels)')
-        y_preds = y_probs = test_metrics = None
+        print(f'\n{name} - SKIPPING TEST & VALIDATION (no labels)')
 
     joblib.dump(pipe, SAVE_DIR / f"{name}_pipeline.pkl")
-
-    output_metrics = test_metrics
-    if (output_metrics == None):
-        output_metrics = train_metrics
     return pipe, output_metrics
 
 
@@ -430,7 +454,8 @@ def plot_pr_curve(y_test, y_probs, ax=None):
 
 
 def plot_shap_summary(pipeline, model, X, num_samples=100):
-    X_transformed = pipeline.named_steps['preprocessing'].transform(X)
+    X_cleaned = pipeline.named_steps['cleaning'].transform(X)
+    X_transformed = pipeline.named_steps['preprocessing'].transform(X_cleaned)
     features = pipeline.named_steps['preprocessing'].get_feature_names_out()
     X_sample = pd.DataFrame(X_transformed[:num_samples], columns=features)
 
@@ -445,7 +470,8 @@ def plot_shap_summary(pipeline, model, X, num_samples=100):
 
 def summarize_model_results(model_data, primary_metric, metrics_to_display, pipelines=None):
     df = pd.DataFrame(model_data).T
-    primary_metric = primary_metric.upper()
+    primary_metric = primary_metric.capitalize()
+
     df_sorted = df.sort_values(by=primary_metric, ascending=False)
 
     worst_model = df_sorted.index[-1]
@@ -457,7 +483,4 @@ def summarize_model_results(model_data, primary_metric, metrics_to_display, pipe
     display(Markdown(f'**Best model by {primary_metric}:** {best_model} with a score of {df_sorted.loc[best_model, primary_metric]:.2%}'))
     display(styled)
 
-    if pipelines:
-        return best_model, pipelines[best_model]
-    else:
-        return best_model
+    return best_model, pipelines[best_model]

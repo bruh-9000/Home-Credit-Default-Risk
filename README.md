@@ -1,1 +1,1 @@
-TODO explain what this repo is for
+Contains many templates for different prediction tasks. Each template has its own **README.md** with more information relevant that specific task.
