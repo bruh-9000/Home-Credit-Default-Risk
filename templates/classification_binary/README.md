@@ -11,3 +11,4 @@ A binary classification template.
 
 # How to use
 Just change the settings in **config.yaml** and the feature engineering in **00_data_prep.ipynb**
+To predict, use `python predict.py model_name`
