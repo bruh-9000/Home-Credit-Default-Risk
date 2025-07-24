@@ -17,7 +17,7 @@ from sklearn.preprocessing import (
 from sklearn.pipeline import Pipeline
 from sklearn.model_selection import (
     train_test_split,
-    StratifiedKFold,
+    KFold,
     GridSearchCV,
     RandomizedSearchCV,
     cross_val_score,
@@ -46,20 +46,15 @@ ordinal_cols = config["encoding"]["ordinal_cols"]
 
 model_configs = config["model_configs"]
 
-from sklearn.dummy import DummyClassifier
-from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import RandomForestClassifier
-from lightgbm import LGBMClassifier
+from sklearn.dummy import DummyRegressor
+from sklearn.linear_model import LinearRegression
+from sklearn.ensemble import RandomForestRegressor
+from lightgbm import LGBMRegressor
 from sklearn.metrics import (
-    accuracy_score,
-    average_precision_score,
-    confusion_matrix,
-    f1_score,
-    precision_score,
-    recall_score,
-    roc_auc_score,
-    roc_curve,
-    precision_recall_curve,
+    mean_absolute_error,
+    mean_squared_error,
+    r2_score,
+    root_mean_squared_error
 )
 import shap
 import seaborn as sns
@@ -90,7 +85,7 @@ def prepare_train_test_split(train_df, test_df, label):
 
     # Case 1: Only one file (split into train/test)
     if test_df is None:
-        X_train, X_test, y_train, y_test = train_test_split(
+        X_train, X_test, y_train, y_true = train_test_split(
             X, y, test_size=0.2, stratify=y, random_state=42
         )
         X_val = y_val = None
@@ -102,18 +97,18 @@ def prepare_train_test_split(train_df, test_df, label):
 
         # Case 2: If test has labels, use as test set
         if label in test_df.columns:
-            y_test = test_df[label]
+            y_true = test_df[label]
             X_val = y_val = None
 
         # Case 3: If test has NO labels, make val set from train
         else:
-            y_test = None
+            y_true = None
 
             X_train, X_val, y_train, y_val = train_test_split(
                 X_train, y_train, test_size=0.2, stratify=y_train, random_state=42
             )
 
-    return X, y, X_train, X_test, y_train, y_test, X_val, y_val
+    return X, y, X_train, X_test, y_train, y_true, X_val, y_val
 
 
 
@@ -243,10 +238,10 @@ preprocessor = ColumnTransformer([
 
 
 models = {
-    'dummy_classifier': DummyClassifier(strategy='stratified', random_state=42),
-    'logistic_regression': LogisticRegression(random_state=42),
-    'random_forest': RandomForestClassifier(random_state=42),
-    'lightgbm': LGBMClassifier(verbose=-1, verbosity=-1, random_state=42)
+    'dummy_regressor': DummyRegressor(strategy='mean', random_state=42),
+    'linear_regression': LinearRegression(),
+    'random_forest': RandomForestRegressor(random_state=42),
+    'lightgbm': LGBMRegressor(verbose=-1, verbosity=-1, random_state=42)
 }
 
 
@@ -257,7 +252,7 @@ def train_pipeline(name, X_train, y_train):
     param_grid = config.get('param_grid', {})
     n_iter = config.get('n_iter', 10)
 
-    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    skf = KFold(n_splits=5, shuffle=True, random_state=42)
 
     pipe = Pipeline([
         ('cleaning', cleaning_pipeline),
@@ -291,8 +286,7 @@ def train_pipeline(name, X_train, y_train):
 
 def predict_pipeline(pipe, X_test):
     y_preds = pipe.predict(X_test)
-    y_probs = pipe.predict_proba(X_test)[:, 1] if hasattr(pipe.named_steps['model'], "predict_proba") else None
-    return y_preds, y_probs
+    return y_preds
 
 
 
@@ -301,21 +295,21 @@ def predict_pipeline(pipe, X_test):
 
 
 def evaluate_pipeline(name, data):
-    X_full, X_train, y_train, X_test, y_test, X_val, y_val = data
+    X_full, X_train, y_train, X_test, y_true, X_val, y_val = data
 
     # Get label mapping from config
     label_mapping = value_mappings.get(label)
 
-    # Apply label mapping to y_train/y_test/y_val
+    # Apply label mapping to y_train/y_true/y_val
     if label_mapping:
         y_train = y_train.map(label_mapping)
-        if y_test is not None:
-            y_test = y_test.map(label_mapping)
+        if y_true is not None:
+            y_true = y_true.map(label_mapping)
         if y_val is not None:
             y_val = y_val.map(label_mapping)
 
     # Check whether we have test labels
-    has_test_labels = y_test is not None and not pd.isnull(y_test).all()
+    has_test_labels = y_true is not None and not pd.isnull(y_true).all()
 
     # Train the pipeline
     pipe = train_pipeline(name, X_train, y_train)
@@ -330,23 +324,23 @@ def evaluate_pipeline(name, data):
 
     # Use test set if labels exist
     if has_test_labels:
-        y_preds, y_probs = predict_pipeline(pipe, X_test)
+        y_preds = predict_pipeline(pipe, X_test)
         print(f'\n{name} - TEST METRICS:')
-        test_metrics = get_analysis(y_test, y_preds)
+        test_metrics = get_analysis(y_true, y_preds)
         output_metrics = test_metrics
 
         if not model_configs.get(name, {}).get('baseline', False):
-            generate_graphs(pipe, model, X_full, y_test, y_preds, y_probs, name)
+            generate_graphs(pipe, model, X_full, y_true, y_preds, name)
 
     # Otherwise fall back to validation set
     elif y_val is not None:
-        y_preds, y_probs = predict_pipeline(pipe, X_val)
+        y_preds = predict_pipeline(pipe, X_val)
         print(f'\n{name} - VALIDATION METRICS:')
         val_metrics = get_analysis(y_val, y_preds)
         output_metrics = val_metrics
 
         if not model_configs.get(name, {}).get('baseline', False):
-            generate_graphs(pipe, model, X_full, y_val, y_preds, y_probs, name)
+            generate_graphs(pipe, model, X_full, y_val, y_preds, name)
 
     else:
         print(f'\n{name} - SKIPPING TEST & VALIDATION (no labels)')
@@ -356,34 +350,24 @@ def evaluate_pipeline(name, data):
 
 
 
-def get_analysis(y_test, y_preds):
-    tn, fp, fn, tp = confusion_matrix(y_test, y_preds).ravel()
-    accuracy = accuracy_score(y_test, y_preds)
-    f1 = f1_score(y_test, y_preds)
-    recall = recall_score(y_test, y_preds)
-    precision = precision_score(y_test, y_preds)
-    specificity = tn / (tn + fp)
-    fpr = fp / (fp + tn)
-    fnr = fn / (fn + tp)
+def get_analysis(y_true, y_preds):
+    mae = mean_absolute_error(y_true, y_preds)
+    mse = mean_squared_error(y_true, y_preds)
+    rmse = root_mean_squared_error(y_true, y_preds)
+    r2 = r2_score(y_true, y_preds)
 
     report = f'''
-Accuracy: {accuracy:.2%}
-F1 Score: {f1:.2%}
-Precision: {precision:.2%}
-True Positive Rate (Recall): {recall:.2%}
-True Negative Rate (Specificity): {specificity:.2%}
-False Positive Rate: {fpr:.2%}
-False Negative Rate: {fnr:.2%}
+MAE: {mae:.2%}
+MSE: {mse:.2%}
+RMSE: {rmse:.2%}
+R2: {r2:.2%}
 '''
     
     values = {
-        'Accuracy': accuracy,
-        'F1': f1,
-        'Precision': precision,
-        'Recall (TPR)': recall,
-        'Specificity (TNR)': specificity,
-        'FPR': fpr,
-        'FNR': fnr
+        'MAE': mae,
+        'MSE': mse,
+        'RMSE': rmse,
+        'R2': r2
     }
 
     print(report)
@@ -392,59 +376,10 @@ False Negative Rate: {fnr:.2%}
 
 
 
-def generate_graphs(pipeline, model, X, y_test, y_pred, y_probs, name):
+def generate_graphs(pipeline, model, X, y_true, y_pred, name):
     fig, axes = plt.subplots(1, 3, figsize=(18, 5))
 
-    plot_confusion_matrix(y_test, y_pred, ax=axes[0])
-    plot_roc_curve(y_test, y_probs, ax=axes[1])
-    plot_pr_curve(y_test, y_probs, ax=axes[2])
-
-    plt.tight_layout()
-    plt.show()
-
     plot_shap_summary(pipeline, model, X)
-
-
-
-def plot_confusion_matrix(y_test, y_pred, labels=['Negative', 'Positive'], ax=None):
-    cm = confusion_matrix(y_test, y_pred)
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(4, 4))
-    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=ax)
-    ax.set_title('Confusion Matrix')
-    ax.set_xlabel('Predicted')
-    ax.set_ylabel('Actual')
-    ax.set_xticklabels(labels)
-    ax.set_yticklabels(labels)
-
-
-
-def plot_roc_curve(y_test, y_probs, ax=None):
-    fpr, tpr, _ = roc_curve(y_test, y_probs)
-    auc = roc_auc_score(y_test, y_probs)
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(4, 4))
-    ax.plot(fpr, tpr, label=f'AUC = {auc:.4f}')
-    ax.plot([0, 1], [0, 1], linestyle='--', color='gray')
-    ax.set_title('ROC Curve')
-    ax.set_xlabel('False Positive Rate')
-    ax.set_ylabel('True Positive Rate')
-    ax.legend()
-    ax.grid(True)
-
-
-
-def plot_pr_curve(y_test, y_probs, ax=None):
-    precision, recall, _ = precision_recall_curve(y_test, y_probs)
-    avg_precision = average_precision_score(y_test, y_probs)
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(4, 4))
-    ax.plot(recall, precision, label=f'Avg Precision = {avg_precision:.4f}')
-    ax.set_title('Precision-Recall Curve')
-    ax.set_xlabel('Recall')
-    ax.set_ylabel('Precision')
-    ax.legend()
-    ax.grid(True)
 
 
 
@@ -465,7 +400,7 @@ def plot_shap_summary(pipeline, model, X, num_samples=100):
 
 def summarize_model_results(model_data, primary_metric, metrics_to_display, pipelines=None):
     df = pd.DataFrame(model_data).T
-    primary_metric = primary_metric.capitalize()
+    primary_metric = primary_metric
 
     df_sorted = df.sort_values(by=primary_metric, ascending=False)
 

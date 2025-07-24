@@ -30,13 +30,6 @@ def predict_with_pipeline(pipeline, X):
     return preds
 
 
-def map_predictions_to_labels(preds, config):
-    label = config["general"]["label"]
-    value_map = config["preprocessing"].get("value_mappings", {}).get(label, {})
-    inverse_map = {v: k for k, v in value_map.items()}
-    return pd.Series(preds).map(inverse_map)
-
-
 def save_submission(ids, preds, model_name, label):
     df = pd.DataFrame({
         "id": ids,
@@ -58,11 +51,10 @@ def main(model_name):
     if "id" not in raw_test.columns:
         raise ValueError("Test file must include an 'id' column")
 
-    raw_preds = predict_with_pipeline(pipe, X_test)
-    readable_preds = map_predictions_to_labels(raw_preds, config)
+    preds = predict_with_pipeline(pipe, X_test)
 
     label = config["general"]["label"]
-    save_submission(raw_test["id"], readable_preds, model_name, label)
+    save_submission(raw_test["id"], preds, model_name, label)
 
 
 if __name__ == "__main__":

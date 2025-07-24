@@ -2,7 +2,7 @@ general:
   file_one_path: ../data/train.csv # train or main
   file_two_path: ../data/test.csv # test or null
   label: Label
-  primary_metric: accuracy
+  primary_metric: MAE
 
 preprocessing:
   drop_features: []
@@ -16,18 +16,16 @@ encoding:
   ordinal_cols: []
 
 model_configs:
-  dummy_classifier:
+  dummy_regressor:
     search_type: null
     baseline: true
     param_grid: {}
 
-  logistic_regression:
+  linear_regression:
     search_type: grid
     baseline: true
     param_grid:
-      model__C: [0.01, 0.1]  # Inverse of regularization strength
-      model__penalty: [l2]  # Which loss type is applied
-      model__solver: [lbfgs]  # Algorithm used for optimization
+      model__fit_intercept: [true, false]
 
   random_forest:
     search_type: random
@@ -41,8 +39,7 @@ model_configs:
       model__n_estimators: [50, 100, 150]  # Number of trees in the forest
       model__max_samples: [0.15, 0.2]  # Percent of samples per tree
       model__max_features: [sqrt]  # Max features considered per split
-      model__criterion: [gini]  # Split criterion
-      model__class_weight: [balanced]  # Weight adjustment for class imbalance
+      model__criterion: [squared_error]  # Split criterion
 
   lightgbm:
     search_type: random
@@ -59,4 +56,3 @@ model_configs:
       model__colsample_bytree: [0.6, 0.8, 1]  # Fraction of features per tree
       model__reg_alpha: [0.1, 1]  # L1 regularization
       model__reg_lambda: [0.5, 1, 2, 3, 5, 10]  # L2 regularization
-      model__class_weight: [none, balanced]  # Weight adjustment for class imbalance
