@@ -1,4 +1,4 @@
-A binary classification template.
+A regression template.
 
 # Layout
 **Data**: Where data such as train and test sets go
