@@ -14,6 +14,8 @@ encoding:
   numerical_scale_cols: []
   onehot_cols: []
   ordinal_cols: []
+  binned_cols: []
+  hash_cols: []
 
 model_configs:
   dummy_classifier:

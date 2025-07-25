@@ -12,8 +12,11 @@ from sklearn.preprocessing import (
     StandardScaler,
     OneHotEncoder,
     OrdinalEncoder,
+    KBinsDiscretizer,
     FunctionTransformer,
 )
+from sklearn.base import BaseEstimator, TransformerMixin
+from category_encoders.hashing import HashingEncoder
 from sklearn.pipeline import Pipeline
 from sklearn.model_selection import (
     train_test_split,
@@ -43,6 +46,8 @@ missing_handling = config["preprocessing"]["missing_handling"]
 numerical_scale_cols = config["encoding"]["numerical_scale_cols"]
 onehot_cols = config["encoding"]["onehot_cols"]
 ordinal_cols = config["encoding"]["ordinal_cols"]
+binned_cols = config["encoding"]["binned_cols"]
+hash_cols = config["encoding"]["hash_cols"]
 
 model_configs = config["model_configs"]
 
@@ -293,9 +298,27 @@ cleaning_pipeline = Pipeline([
 preprocessor = ColumnTransformer([
     ('num', StandardScaler(), numerical_scale_cols),
     ('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=False), onehot_cols),
-    ('ordinal', OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1), ordinal_cols)
+    ('ordinal', OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1), ordinal_cols),
+    ('binned', KBinsDiscretizer(n_bins=5, encode='ordinal', strategy='quantile'), config["encoding"].get("binned_cols", [])),
+    ('hashed', FunctionTransformer(lambda x: HashingEncoder(n_components=4).fit_transform(x), validate=False), config["encoding"].get("hash_cols", []))
 ], remainder='passthrough')
 
+
+
+# Custom wrapper for HashingEncoder inside ColumnTransformer
+class HashingEncoderWrapper(BaseEstimator, TransformerMixin):
+    def __init__(self, cols=None, n_components=4):
+        self.cols = cols
+        self.n_components = n_components
+        self.encoder = HashingEncoder(n_components=n_components)
+
+    def fit(self, X, y=None):
+        self.encoder.fit(X[self.cols])
+        return self
+
+    def transform(self, X):
+        return self.encoder.transform(X[self.cols])
+    
 
 
 # Evaluation and analysis utilities
