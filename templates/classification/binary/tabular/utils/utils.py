@@ -73,8 +73,10 @@ import missingno as msno
 
 
 
-def load_data(file_one, file_two):
-    return pd.read_csv(file_one), pd.read_csv(file_two) if file_two else None
+def load_data(file_one, file_two=None):
+    df1 = pd.read_csv(file_one)
+    df2 = pd.read_csv(file_two) if file_two else None
+    return df1, df2
 
 
 
@@ -234,7 +236,7 @@ def convert_dollar_strings(X):
     X = X.copy()
     for col in money_cols:
         if col in X.columns:
-            X[col] = X[col].astype(str).str.replace(r'[\$,]', '', regex=True).str.strip()
+            X[col] = X[col].apply(lambda x: re.sub(r'[\$,]', '', str(x)).strip() if pd.notna(x) else x)
             X[col] = X[col].replace('', np.nan)
             X[col] = pd.to_numeric(X[col], errors='coerce')
     return X
