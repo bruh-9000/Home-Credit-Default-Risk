@@ -1,4 +1,3 @@
-# Core libraries
 import warnings
 warnings.filterwarnings("ignore")
 import numpy as np
@@ -29,15 +28,12 @@ from sklearn.model_selection import (
 )
 
 from pathlib import Path
-SAVE_DIR = Path(__file__).resolve().parent.parent / "saved"
-SAVE_DIR.mkdir(parents=True, exist_ok=True)
-
-# Load config.yaml
 ROOT = Path(__file__).resolve().parent.parent
+SAVE_DIR = ROOT / "saved"
+
 with open(ROOT / "config.yaml", "r") as f:
     config = yaml.safe_load(f)
 
-# Access values from the config
 label = config["general"]["label"]
 primary_metric = config["general"]["primary_metric"]
 drop_features = config["preprocessing"]["drop_features"]
@@ -140,7 +136,7 @@ def show_missing_data(df):
     if df.isna().sum().sum() > 0:
         missing_counts = df.isna().sum()
 
-        # Low missing amounts (per column)
+        # Print columns with missing data
         print('Missing values detected in:')
         print(missing_counts[missing_counts > 0])
 
@@ -153,31 +149,10 @@ def show_missing_data(df):
 
 
 
-# Model training utilities
-
-
-
-models = {
-    'dummy_classifier': DummyClassifier(strategy='stratified', random_state=42),
-    'logistic_regression': LogisticRegression(random_state=42),
-    'random_forest': RandomForestClassifier(random_state=42),
-    'lightgbm': LGBMClassifier(verbose=-1, verbosity=-1, random_state=42)
-}
-
-
-
-def predict_pipeline(pipe, X_test):
-    y_preds = pipe.predict(X_test)
-    y_probs = pipe.predict_proba(X_test)[:, 1] if hasattr(pipe.named_steps['model'], "predict_proba") else None
-    return y_preds, y_probs
-
-
-
 # Feature engineering pipeline
 
 
 
-# Drop columns based on config.py list
 def drop_columns(X):
     if isinstance(X, pd.DataFrame):
         to_drop = [col for col in drop_features if col in X.columns]
@@ -203,7 +178,6 @@ mapper = FunctionTransformer(apply_mappings, feature_names_out='one-to-one')
 
 
 
-# Make sure each feature is the correct type
 def coerce_types(X):
     str_to_dtype = {
         'int': int,
@@ -219,7 +193,7 @@ coercer = FunctionTransformer(coerce_types, feature_names_out='one-to-one')
 
 
 
-# Perform actions based on config.py setting for each feature
+# Handle missing values in different ways
 def handle_missing_values(X):
     if missing_handling is None:
         return X
@@ -240,7 +214,7 @@ def handle_missing_values(X):
             mode_val = X[col].mode()
             if not mode_val.empty:
                 X[col] = X[col].fillna(mode_val[0])
-        elif strategy == 'prior':
+        elif strategy == 'prior': # Like dummy classifier, imputes missing with relative value probabilities. Good for cateogires
             non_na = X[col].dropna()
             if non_na.nunique() == 2:
                 probs = non_na.value_counts(normalize=True)
@@ -248,13 +222,14 @@ def handle_missing_values(X):
                     lambda x: np.random.choice(probs.index, p=probs.values) if pd.isna(x) else x
                 )
         else:
-            X[col] = X[col].fillna(strategy)
+            X[col] = X[col].fillna(strategy) # Impute missing data with a set value
         
     return X
 missing_handler = FunctionTransformer(handle_missing_values, feature_names_out='one-to-one')
 
 
 
+# Convert any string monetary values into floats (e.g., '$1.23' into 1.23)
 def convert_dollar_strings(X):
     X = X.copy()
     for col in money_cols:
@@ -273,7 +248,6 @@ class NamedFunctionTransformer(FunctionTransformer):
         self.feature_names = feature_names
 
     def get_feature_names_out(self, input_features=None):
-        # Return the list of feature names provided at init
         return np.array(self.feature_names)
 
 
@@ -287,6 +261,7 @@ def freq_encode(X):
 freq_transformer = NamedFunctionTransformer(
     freq_encode, feature_names=freq_cols
 )
+
 
 
 def hash_encode(X):
@@ -305,6 +280,8 @@ cleaning_pipeline = Pipeline([
     ('coerce_types', coercer)
 ])
 
+
+
 preprocessor = ColumnTransformer([
     ('num', StandardScaler(), numerical_scale_cols),
     ('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=False), onehot_cols),
@@ -317,7 +294,23 @@ preprocessor.set_output(transform='pandas')
     
 
 
-# Evaluation and analysis utilities
+# Pipeline, evaluation, and analysis
+
+
+
+models = {
+    'dummy_classifier': DummyClassifier(strategy='stratified', random_state=42),
+    'logistic_regression': LogisticRegression(random_state=42),
+    'random_forest': RandomForestClassifier(random_state=42),
+    'lightgbm': LGBMClassifier(verbose=-1, verbosity=-1, random_state=42)
+}
+
+
+
+def predict_pipeline(pipe, X_test):
+    y_preds = pipe.predict(X_test)
+    y_probs = pipe.predict_proba(X_test)[:, 1] if hasattr(pipe.named_steps['model'], "predict_proba") else None
+    return y_preds, y_probs
 
 
 
@@ -335,7 +328,7 @@ def evaluate_pipeline(name, data):
         if y_val is not None:
             y_val = y_val.map(label_mapping)
 
-    # Check whether we have test labels
+    # Check whether there are test labels
     has_test_labels = y_test is not None and not pd.isnull(y_test).all()
 
     # Train the pipeline
@@ -345,7 +338,7 @@ def evaluate_pipeline(name, data):
     # Train metrics
     y_train_preds = pipe.predict(X_train)
     print(f'\n{name} - TRAIN METRICS:')
-    train_metrics = get_analysis(y_train, y_train_preds)
+    train_metrics = get_analysis(y_train, y_train_preds) # Var not used, but func prints stuff
 
     y_preds = y_probs = None
 
@@ -357,7 +350,7 @@ def evaluate_pipeline(name, data):
         output_metrics = test_metrics
 
         if not model_configs.get(name, {}).get('baseline', False):
-            generate_graphs(pipe, model, X_train, y_test, y_preds, y_probs, name)
+            generate_graphs(model, X_train, y_test, y_preds, y_probs)
 
     # Otherwise fall back to validation set
     elif y_val is not None:
@@ -367,7 +360,7 @@ def evaluate_pipeline(name, data):
         output_metrics = val_metrics
 
         if not model_configs.get(name, {}).get('baseline', False):
-            generate_graphs(pipe, model, X_train, y_val, y_preds, y_probs, name)
+            generate_graphs(model, X_train, y_val, y_preds, y_probs)
 
     else:
         print(f'\n{name} - SKIPPING TEST & VALIDATION (no labels)')
@@ -449,7 +442,7 @@ False Negative Rate: {fnr:.2%}
 
 
 
-def generate_graphs(pipeline, model, X_train, y_test, y_pred, y_probs, name):
+def generate_graphs(model, X_train, y_test, y_pred, y_probs):
     fig, axes = plt.subplots(1, 3, figsize=(18, 5))
 
     plot_confusion_matrix(y_test, y_pred, ax=axes[0])

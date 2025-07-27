@@ -12,9 +12,11 @@ CONFIG_PATH = ROOT / "config.yaml"
 sys.path.append(str(ROOT))
 
 
+
 def load_config():
     with open(CONFIG_PATH, "r") as f:
         return yaml.safe_load(f)
+
 
 
 def load_model(model_name):
@@ -30,11 +32,13 @@ def predict_with_pipeline(pipeline, X):
     return preds
 
 
+
 def map_predictions_to_labels(preds, config):
     label = config["general"]["label"]
     value_map = config["preprocessing"].get("value_mappings", {}).get(label, {})
     inverse_map = {v: k for k, v in value_map.items()}
     return pd.Series(preds).map(inverse_map)
+
 
 
 def save_submission(ids, preds, model_name, label):
@@ -45,6 +49,7 @@ def save_submission(ids, preds, model_name, label):
     out_file = SAVE_DIR / f"{model_name}_submission.csv"
     df.to_csv(out_file, index=False)
     print(f"Saved predictions to {out_file}")
+
 
 
 def main(model_name):
@@ -63,6 +68,7 @@ def main(model_name):
 
     label = config["general"]["label"]
     save_submission(raw_test["id"], readable_preds, model_name, label)
+
 
 
 if __name__ == "__main__":
