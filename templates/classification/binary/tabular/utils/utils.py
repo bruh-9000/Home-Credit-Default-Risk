@@ -2,8 +2,10 @@
 import warnings
 warnings.filterwarnings("ignore")
 import numpy as np
+np.random.seed(42)
 import joblib
 import yaml
+import re
 
 import pandas as pd
 from IPython.display import display, Markdown
@@ -42,9 +44,11 @@ drop_features = config["preprocessing"]["drop_features"]
 value_mappings = config["preprocessing"]["value_mappings"]
 type_coercion = config["preprocessing"]["type_coercion"]
 missing_handling = config["preprocessing"]["missing_handling"]
+money_cols = config["preprocessing"]["money_cols"]
 
 numerical_scale_cols = config["encoding"]["numerical_scale_cols"]
 onehot_cols = config["encoding"]["onehot_cols"]
+freq_cols = config["encoding"]["freq_cols"]
 ordinal_cols = config["encoding"]["ordinal_cols"]
 binned_cols = config["encoding"]["binned_cols"]
 hash_cols = config["encoding"]["hash_cols"]
@@ -87,7 +91,7 @@ def dedup(df):
 
 
 
-def prepare_train_test_split(train_df, test_df, label):
+def prepare_train_test_split(train_df, test_df):
     X = train_df
     y = train_df[label]
 
@@ -162,44 +166,6 @@ models = {
 
 
 
-def train_pipeline(name, X_train, y_train):
-    config = model_configs.get(name, {})
-    search_type = config.get('search_type')
-    param_grid = config.get('param_grid', {})
-    n_iter = config.get('n_iter', 10)
-
-    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-
-    pipe = Pipeline([
-        ('cleaning', cleaning_pipeline),
-        ('preprocessing', preprocessor),
-        ('model', models[name])
-    ])
-
-    if search_type == 'grid':
-        search = GridSearchCV(pipe, param_grid=param_grid, cv=skf, scoring=primary_metric, n_jobs=-1)
-        search.fit(X_train, y_train)
-        pipe = search.best_estimator_
-        print(f'\nBest hyperparameters for {name} (GridSearchCV):')
-        print(search.best_params_)
-
-    elif search_type == 'random':
-        search = RandomizedSearchCV(pipe, param_distributions=param_grid, n_iter=n_iter, cv=skf,
-                                    scoring=primary_metric, n_jobs=-1)
-        search.fit(X_train, y_train)
-        pipe = search.best_estimator_
-        print(f'\nBest hyperparameters for {name} (RandomizedSearchCV):')
-        print(search.best_params_)
-
-    else:
-        scores = cross_val_score(pipe, X_train, y_train, cv=skf, scoring=primary_metric, n_jobs=-1)
-        print(f'\n{name} - CV {primary_metric}: {scores.mean():.4f} ± {scores.std():.4f}')
-        pipe.fit(X_train, y_train)
-
-    return pipe
-
-
-
 def predict_pipeline(pipe, X_test):
     y_preds = pipe.predict(X_test)
     y_probs = pipe.predict_proba(X_test)[:, 1] if hasattr(pipe.named_steps['model'], "predict_proba") else None
@@ -213,9 +179,12 @@ def predict_pipeline(pipe, X_test):
 
 # Drop columns based on config.py list
 def drop_columns(X):
-    existing = [col for col in drop_features if col in X.columns]
-    return X.drop(columns=existing)
-dropper = FunctionTransformer(drop_columns, feature_names_out='one-to-one')
+    if isinstance(X, pd.DataFrame):
+        to_drop = [col for col in drop_features if col in X.columns]
+        X = X.drop(columns=to_drop)
+        X = X.reset_index(drop=True)
+    return pd.DataFrame(X)
+dropper = FunctionTransformer(drop_columns, validate=False)
 
 
 
@@ -223,7 +192,12 @@ dropper = FunctionTransformer(drop_columns, feature_names_out='one-to-one')
 def apply_mappings(X):
     for col, mapping in value_mappings.items():
         if col != label and col in X.columns:
-            X[col] = X[col].map(mapping)
+            fixed_mapping = {np.nan if str(k).lower() == 'nan' else k: v for k, v in mapping.items()}
+            X[col] = X[col].map(fixed_mapping)
+
+            # Now explicitly fillna if mapping contained NaN
+            if any(str(k).lower() == 'nan' for k in mapping.keys()):
+                X[col] = X[col].fillna(mapping['NaN'])  # YAML str "NaN"
     return X
 mapper = FunctionTransformer(apply_mappings, feature_names_out='one-to-one')
 
@@ -231,7 +205,16 @@ mapper = FunctionTransformer(apply_mappings, feature_names_out='one-to-one')
 
 # Make sure each feature is the correct type
 def coerce_types(X):
-    return X.astype(type_coercion)
+    str_to_dtype = {
+        'int': int,
+        'float': float,
+        'str': str,
+        'bool': bool
+    }
+
+    type_coercion_actual = {k: str_to_dtype[v] for k, v in type_coercion.items()}
+
+    return X.astype(type_coercion_actual)
 coercer = FunctionTransformer(coerce_types, feature_names_out='one-to-one')
 
 
@@ -265,59 +248,72 @@ def handle_missing_values(X):
                     lambda x: np.random.choice(probs.index, p=probs.values) if pd.isna(x) else x
                 )
         else:
-            raise ValueError(f"Unsupported missing value strategy: '{strategy}' for column '{col}'")
+            X[col] = X[col].fillna(strategy)
         
     return X
 missing_handler = FunctionTransformer(handle_missing_values, feature_names_out='one-to-one')
 
 
 
-# Bound outliers 1.5x outside IQR
-def handle_outliers(X):
+def convert_dollar_strings(X):
     X = X.copy()
-    for col in X.select_dtypes(include='number').columns:
-        q1 = X[col].quantile(0.25)
-        q3 = X[col].quantile(0.75)
-        iqr = q3 - q1
-        lower = q1 - 1.5 * iqr
-        upper = q3 + 1.5 * iqr
-        X[col] = X[col].clip(lower, upper)
+    for col in money_cols:
+        if col in X.columns:
+            X[col] = X[col].astype(str).str.replace(r'[\$,]', '', regex=True).str.strip()
+            X[col] = X[col].replace('', np.nan)
+            X[col] = pd.to_numeric(X[col], errors='coerce')
     return X
-outlier_handler = FunctionTransformer(handle_outliers, feature_names_out='one-to-one')
+dollar_string_converter = FunctionTransformer(convert_dollar_strings, feature_names_out='one-to-one')
 
+
+
+class NamedFunctionTransformer(FunctionTransformer):
+    def __init__(self, func, feature_names):
+        super().__init__(func)
+        self.feature_names = feature_names
+
+    def get_feature_names_out(self, input_features=None):
+        # Return the list of feature names provided at init
+        return np.array(self.feature_names)
+
+
+
+def freq_encode(X):
+    X = X.copy()
+    for col in X.columns:
+        freqs = X[col].value_counts(normalize=True)
+        X[col] = X[col].map(freqs).fillna(0)
+    return X
+freq_transformer = NamedFunctionTransformer(
+    freq_encode, feature_names=freq_cols
+)
+
+
+def hash_encode(X):
+    return HashingEncoder(n_components=4).fit_transform(X)
+hash_transformer = NamedFunctionTransformer(
+    hash_encode, feature_names=hash_cols
+)
+    
 
 
 cleaning_pipeline = Pipeline([
     ('drop_columns', dropper),
     ('map_values', mapper),
-    ('coerce_types', coercer),
     ('handle_missing', missing_handler),
-    ('handle_outliers', outlier_handler)
+    ('money_convert', dollar_string_converter),
+    ('coerce_types', coercer)
 ])
 
 preprocessor = ColumnTransformer([
     ('num', StandardScaler(), numerical_scale_cols),
     ('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=False), onehot_cols),
+    ('freq', freq_transformer, freq_cols),
     ('ordinal', OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1), ordinal_cols),
-    ('binned', KBinsDiscretizer(n_bins=5, encode='ordinal', strategy='quantile'), config["encoding"].get("binned_cols", [])),
-    ('hashed', FunctionTransformer(lambda x: HashingEncoder(n_components=4).fit_transform(x), validate=False), config["encoding"].get("hash_cols", []))
+    ('binned', KBinsDiscretizer(n_bins=5, encode='ordinal', strategy='quantile'), binned_cols),
+    ('hashed', hash_transformer, hash_cols)
 ], remainder='passthrough')
-
-
-
-# Custom wrapper for HashingEncoder inside ColumnTransformer
-class HashingEncoderWrapper(BaseEstimator, TransformerMixin):
-    def __init__(self, cols=None, n_components=4):
-        self.cols = cols
-        self.n_components = n_components
-        self.encoder = HashingEncoder(n_components=n_components)
-
-    def fit(self, X, y=None):
-        self.encoder.fit(X[self.cols])
-        return self
-
-    def transform(self, X):
-        return self.encoder.transform(X[self.cols])
+preprocessor.set_output(transform='pandas')
     
 
 
@@ -361,7 +357,7 @@ def evaluate_pipeline(name, data):
         output_metrics = test_metrics
 
         if not model_configs.get(name, {}).get('baseline', False):
-            generate_graphs(pipe, model, X_full, y_test, y_preds, y_probs, name)
+            generate_graphs(pipe, model, X_train, y_test, y_preds, y_probs, name)
 
     # Otherwise fall back to validation set
     elif y_val is not None:
@@ -371,13 +367,49 @@ def evaluate_pipeline(name, data):
         output_metrics = val_metrics
 
         if not model_configs.get(name, {}).get('baseline', False):
-            generate_graphs(pipe, model, X_full, y_val, y_preds, y_probs, name)
+            generate_graphs(pipe, model, X_train, y_val, y_preds, y_probs, name)
 
     else:
         print(f'\n{name} - SKIPPING TEST & VALIDATION (no labels)')
 
     joblib.dump(pipe, SAVE_DIR / f"{name}_pipeline.pkl")
     return pipe, output_metrics
+
+
+
+def train_pipeline(name, X_train, y_train):
+    config = model_configs.get(name, {})
+    search_type = config.get('search_type')
+    param_grid = config.get('param_grid', {})
+    n_iter = config.get('n_iter', 10)
+
+    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+
+    pipe = Pipeline([
+        ('model', models[name])
+    ])
+
+    if search_type == 'grid':
+        search = GridSearchCV(pipe, param_grid=param_grid, cv=skf, scoring=primary_metric, n_jobs=-1)
+        search.fit(X_train, y_train)
+        pipe = search.best_estimator_
+        print(f'\nBest hyperparameters for {name} (GridSearchCV):')
+        print(search.best_params_)
+
+    elif search_type == 'random':
+        search = RandomizedSearchCV(pipe, param_distributions=param_grid, n_iter=n_iter, cv=skf,
+                                    scoring=primary_metric, n_jobs=-1)
+        search.fit(X_train, y_train)
+        pipe = search.best_estimator_
+        print(f'\nBest hyperparameters for {name} (RandomizedSearchCV):')
+        print(search.best_params_)
+
+    else:
+        scores = cross_val_score(pipe, X_train, y_train, cv=skf, scoring=primary_metric, n_jobs=-1)
+        print(f'\n{name} - CV {primary_metric}: {scores.mean():.4f} ± {scores.std():.4f}')
+        pipe.fit(X_train, y_train)
+
+    return pipe
 
 
 
@@ -417,7 +449,7 @@ False Negative Rate: {fnr:.2%}
 
 
 
-def generate_graphs(pipeline, model, X, y_test, y_pred, y_probs, name):
+def generate_graphs(pipeline, model, X_train, y_test, y_pred, y_probs, name):
     fig, axes = plt.subplots(1, 3, figsize=(18, 5))
 
     plot_confusion_matrix(y_test, y_pred, ax=axes[0])
@@ -427,7 +459,7 @@ def generate_graphs(pipeline, model, X, y_test, y_pred, y_probs, name):
     plt.tight_layout()
     plt.show()
 
-    plot_shap_summary(pipeline, model, X)
+    plot_shap_summary(model, X_train)
 
 
 
@@ -473,18 +505,16 @@ def plot_pr_curve(y_test, y_probs, ax=None):
 
 
 
-def plot_shap_summary(pipeline, model, X, num_samples=100):
-    X_cleaned = pipeline.named_steps['cleaning'].transform(X)
-    X_transformed = pipeline.named_steps['preprocessing'].transform(X_cleaned)
-    features = pipeline.named_steps['preprocessing'].get_feature_names_out()
-    X_sample = pd.DataFrame(X_transformed[:num_samples], columns=features)
+def plot_shap_summary(model, X_train, num_samples=20):
+    features = X_train.columns
+    X_sample = pd.DataFrame(X_train[:num_samples], columns=features)
 
     explainer = shap.TreeExplainer(model, feature_perturbation='interventional')
     shap_values = explainer.shap_values(X_sample)
     if isinstance(shap_values, list):
         shap_values = shap_values[1]
 
-    shap.summary_plot(shap_values, X_sample, feature_names=features, plot_type='bar', plot_size=[8,4])
+    shap.summary_plot(shap_values, X_sample, feature_names=features, plot_type='bar', plot_size=[8, 4])
 
 
 

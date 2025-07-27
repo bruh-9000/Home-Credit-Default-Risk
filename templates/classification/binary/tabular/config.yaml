@@ -8,11 +8,13 @@ preprocessing:
   drop_features: []
   value_mappings: {}
   type_coercion: {}
+  money_cols: [] # Columns to convert from money to int. Ex. '$1.00' to 1.00
   missing_handling: {} # 'drop', 'mean', 'median', 'mode', 'prior'
 
 encoding:
   numerical_scale_cols: []
   onehot_cols: []
+  freq_cols: []
   ordinal_cols: []
   binned_cols: []
   hash_cols: []

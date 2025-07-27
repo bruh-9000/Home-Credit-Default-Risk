@@ -3,8 +3,9 @@ import seaborn as sns
 
 
 
-def plot_pie(df, column, title='Pie Chart'):
-    df[column].value_counts().plot(
+def plot_pie(df, column, title=None):
+    if title == None: title = column
+    df[column].value_counts(dropna=False).plot(
         kind='pie',
         autopct='%1.1f%%',
         ylabel='',
@@ -15,7 +16,8 @@ def plot_pie(df, column, title='Pie Chart'):
 
 
 
-def plot_histogram(df, column, title='Histogram', xlabel=None, ylabel='Frequency', bins=10):
+def plot_histogram(df, column, title=None, xlabel=None, ylabel='Frequency', bins=10):
+    if title == None: title = column
     df[column].plot(
         kind='hist',
         bins=bins,
@@ -29,7 +31,8 @@ def plot_histogram(df, column, title='Histogram', xlabel=None, ylabel='Frequency
 
 
 
-def plot_bar(df, column, title='Bar Chart', xlabel=None, ylabel='Count'):
+def plot_bar(df, column, title=None, xlabel=None, ylabel='Count'):
+    if title == None: title = column
     df[column].value_counts().sort_index().plot(
         kind='bar',
         edgecolor='black',
@@ -56,7 +59,8 @@ def plot_line(df, x, y, title='Line Plot', xlabel=None, ylabel=None):
 
 
 
-def plot_box(df, column, by, title='Box Plot', xlabel=None, ylabel=None):
+def plot_box(df, column, by, title=None, xlabel=None, ylabel=None):
+    if title == None: title = column
     df.boxplot(
         column=column,
         by=by,
@@ -80,18 +84,4 @@ def plot_scatter(df, x, y, title='Scatter Plot', xlabel=None, ylabel=None):
     )
     plt.xlabel(xlabel or x)
     plt.ylabel(ylabel or y)
-    plt.show()
-
-
-
-def plot_correlation_heatmap(corr_matrix, abs=False):
-    if abs:
-        corr_matrix = corr_matrix.abs()
-        cmap = 'Reds'
-    else:
-        cmap = 'coolwarm'
-
-    plt.figure(figsize=(8, 6))
-    sns.heatmap(corr_matrix, annot=True, fmt='.2f', cmap=cmap)
-    plt.title('Feature Correlation Heatmap' + (' (Absolute)' if abs else ''))
     plt.show()
