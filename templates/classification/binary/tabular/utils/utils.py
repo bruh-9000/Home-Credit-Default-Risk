@@ -159,7 +159,7 @@ def auto_config_from_data(X, CONFIG_PATH):
     missing_handling = {}
 
     # Drop: 90%+ missing or constant
-    high_missing = X.columns[X.isnull().mean() > 0.9]
+    high_missing = X.columns[X.isna().mean() > 0.9]
     constant_cols = X.columns[X.nunique(dropna=False) <= 1]
     drop_features |= set(high_missing) | set(constant_cols)
     config["preprocessing"]["drop_features"] = sorted(drop_features)
@@ -168,7 +168,7 @@ def auto_config_from_data(X, CONFIG_PATH):
     for col in X.columns:
         if col in drop_features:
             continue
-        uniques = X[col].dropna().unique()
+        uniques = X[col].unique()
         if len(uniques) == 2 and all(isinstance(v, str) for v in uniques):
             sorted_vals = sorted(uniques)
             value_mappings[col] = {sorted_vals[0]: 0, sorted_vals[1]: 1}
@@ -201,7 +201,7 @@ def auto_config_from_data(X, CONFIG_PATH):
     for col in X.columns:
         if col in drop_features or col == label:
             continue
-        ratio = X[col].isnull().mean()
+        ratio = X[col].isna().mean()
         if ratio == 0 or ratio > 0.5:
             continue
         nunique = X[col].nunique(dropna=True)
@@ -434,7 +434,7 @@ def evaluate_pipeline(name, data):
             y_val = y_val.map(label_mapping)
 
     # Check whether there are test labels
-    has_test_labels = y_test is not None and not pd.isnull(y_test).all()
+    has_test_labels = y_test is not None and not pd.isna(y_test).all()
 
     # Train the pipeline
     pipe = train_pipeline(name, X_train, y_train)
