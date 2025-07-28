@@ -112,30 +112,31 @@ def prepare_train_test_split(train_df, test_df):
     X = train_df
     y = train_df[label]
 
-    # Case 1: Only one file (split into train/test)
     if test_df is None:
-        X_train, X_test, y_train, y_test = train_test_split(
+        # Case 1: Only one dataset, do train/test split, then val from train
+        X_train_full, X_test, y_train_full, y_test = train_test_split(
             X, y, test_size=0.2, stratify=y, random_state=42
         )
-        X_val = y_val = None
+
+        X_train, X_val, y_train, y_val = train_test_split(
+            X_train_full, y_train_full, test_size=0.2, stratify=y_train_full, random_state=42
+        )
 
     else:
-        X_test = test_df
-        X_train = train_df
-        y_train = y
+        X_test = test_df.copy()
 
-        # Case 2: If test has labels, use as test set
-        if label in test_df.columns:
-            y_test = test_df[label]
-            X_val = y_val = None
-
-        # Case 3: If test has NO labels, make val set from train
+        if label in X_test.columns:
+            # Case 2: Test set includes labels
+            y_test = X_test[label]
+            X_test = X_test.drop(columns=[label])
         else:
+            # Case 3: Test set is unlabeled
             y_test = None
 
-            X_train, X_val, y_train, y_val = train_test_split(
-                X_train, y_train, test_size=0.2, stratify=y_train, random_state=42
-            )
+        # Split train into train/val
+        X_train, X_val, y_train, y_val = train_test_split(
+            X, y, test_size=0.2, stratify=y, random_state=42
+        )
 
     return X, y, X_train, X_test, y_train, y_test, X_val, y_val
 
