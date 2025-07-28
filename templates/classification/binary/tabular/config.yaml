@@ -15,6 +15,7 @@ encoding:
   numerical_scale_cols: []
   onehot_cols: []
   freq_cols: []
+  target_cols: []
   ordinal_cols: []
   binned_cols: []
   hash_cols: []

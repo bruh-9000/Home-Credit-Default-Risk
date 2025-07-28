@@ -17,7 +17,11 @@ from sklearn.preprocessing import (
     FunctionTransformer,
 )
 from sklearn.base import BaseEstimator, TransformerMixin
-from category_encoders.hashing import HashingEncoder
+from category_encoders import (
+    HashingEncoder,
+    TargetEncoder,
+    CountEncoder
+)
 from sklearn.pipeline import Pipeline
 from sklearn.model_selection import (
     train_test_split,
@@ -41,6 +45,7 @@ money_cols: list
 numerical_scale_cols: list
 onehot_cols: list
 freq_cols: list
+target_cols: list
 ordinal_cols: list
 binned_cols: list
 hash_cols: list
@@ -62,6 +67,7 @@ def load_config():
         "numerical_scale_cols": config["encoding"]["numerical_scale_cols"],
         "onehot_cols": config["encoding"]["onehot_cols"],
         "freq_cols": config["encoding"]["freq_cols"],
+        "target_cols": config["encoding"]["target_cols"],
         "ordinal_cols": config["encoding"]["ordinal_cols"],
         "binned_cols": config["encoding"]["binned_cols"],
         "hash_cols": config["encoding"]["hash_cols"],
@@ -360,24 +366,12 @@ class NamedFunctionTransformer(FunctionTransformer):
 
 
 
-def freq_encode(X):
-    X = X.copy()
-    for col in X.columns:
-        freqs = X[col].value_counts(normalize=True)
-        X[col] = X[col].map(freqs).fillna(0)
-    return X
-freq_transformer = NamedFunctionTransformer(
-    freq_encode, feature_names=freq_cols
-)
-
-
-
 def hash_encode(X):
     return HashingEncoder(n_components=4).fit_transform(X)
 hash_transformer = NamedFunctionTransformer(
     hash_encode, feature_names=hash_cols
 )
-    
+
 
 
 cleaning_pipeline = Pipeline([
@@ -389,12 +383,13 @@ cleaning_pipeline = Pipeline([
 ])
 
 preprocessor = ColumnTransformer([
-    ('num', StandardScaler(), numerical_scale_cols),
-    ('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=False), onehot_cols),
-    ('freq', freq_transformer, freq_cols),
-    ('ordinal', OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1), ordinal_cols),
-    ('binned', KBinsDiscretizer(n_bins=5, encode='ordinal', strategy='quantile'), binned_cols),
-    ('hashed', hash_transformer, hash_cols)
+    ('nums', StandardScaler(), numerical_scale_cols),
+    ('oneh', OneHotEncoder(handle_unknown='ignore', sparse_output=False), onehot_cols),
+    ('freq', CountEncoder(normalize=True), freq_cols),
+    ('targ', TargetEncoder(), target_cols),
+    ('ordi', OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1), ordinal_cols),
+    ('bins', KBinsDiscretizer(n_bins=5, encode='ordinal', strategy='quantile'), binned_cols),
+    ('hash', hash_transformer, hash_cols)
 ], remainder='passthrough')
 preprocessor.set_output(transform='pandas')
 
