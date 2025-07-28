@@ -5,7 +5,7 @@ np.random.seed(42)
 import joblib
 import yaml
 import re
-
+from ruamel.yaml import YAML
 import pandas as pd
 from IPython.display import display, Markdown
 from sklearn.compose import ColumnTransformer
@@ -123,6 +123,90 @@ def prepare_train_test_split(train_df, test_df):
 
 
 # Data preparation utilities
+
+
+
+def auto_config_from_data(X, CONFIG_PATH):
+    yaml = YAML()
+    yaml.preserve_quotes = True
+
+    with open(CONFIG_PATH, "r") as f:
+        config = yaml.load(f)
+
+    drop_features = set()
+    value_mappings = {}
+    money_cols = set()
+    type_coercion = {}
+    missing_handling = {}
+
+    # Drop: 90%+ missing or constant
+    high_missing = X.columns[X.isnull().mean() > 0.9]
+    constant_cols = X.columns[X.nunique(dropna=False) <= 1]
+    drop_features |= set(high_missing) | set(constant_cols)
+    config["preprocessing"]["drop_features"] = sorted(drop_features)
+
+    # Binary string value mappings
+    for col in X.columns:
+        if col in drop_features:
+            continue
+        uniques = X[col].dropna().unique()
+        if len(uniques) == 2 and all(isinstance(v, str) for v in uniques):
+            sorted_vals = sorted(uniques)
+            value_mappings[col] = {sorted_vals[0]: 0, sorted_vals[1]: 1}
+    config["preprocessing"]["value_mappings"] = value_mappings
+
+    # Money-like columns
+    money_regex = re.compile(r"^\$\d{1,3}(,\d{3})*(\.\d{2})?$|^\$\d+(\.\d{2})?$")
+    for col in X.columns:
+        if col in drop_features:
+            continue
+        sample = X[col].dropna().astype(str).head(10)
+        if sample.str.contains(r"\$").any():
+            match_rate = sample.apply(lambda x: bool(money_regex.match(x.strip()))).mean()
+            if match_rate >= 0.8:
+                money_cols.add(col)
+    config["preprocessing"]["money_cols"] = sorted(money_cols)
+
+    # Type coercion (str that can be floats)
+    for col in X.select_dtypes(include="object"):
+        if col in drop_features or col == label:
+            continue
+        try:
+            X[col].astype(float)
+            type_coercion[col] = "float"
+        except Exception:
+            pass
+    config["preprocessing"]["type_coercion"] = dict(sorted(type_coercion.items()))
+
+    # Missing handling
+    for col in X.columns:
+        if col in drop_features or col == label:
+            continue
+        ratio = X[col].isnull().mean()
+        if ratio == 0 or ratio > 0.5:
+            continue
+        nunique = X[col].nunique(dropna=True)
+        if np.issubdtype(X[col].dtype, np.number):
+            skew = X[col].skew(skipna=True)
+            if nunique <= 3:
+                missing_handling[col] = "mode"
+            elif abs(skew) < 1:
+                missing_handling[col] = "mean"
+            else:
+                missing_handling[col] = "median"
+        elif X[col].dtype == object and nunique <= 10:
+            missing_handling[col] = "mode"
+    config["preprocessing"]["missing_handling"] = dict(sorted(missing_handling.items()))
+
+    # Write out
+    with open(CONFIG_PATH, "w") as f:
+        yaml.dump(config, f)
+
+    print(f"Updated drop_features: {sorted(drop_features)}")
+    print(f"Updated value_mappings: {sorted(value_mappings)}")
+    print(f"Updated money_cols: {sorted(money_cols)}")
+    print(f"Updated type_coercion: {sorted(type_coercion)}")
+    print(f"Updated missing_handling: {sorted(missing_handling)}")
 
 
 
