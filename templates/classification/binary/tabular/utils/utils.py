@@ -28,28 +28,47 @@ from sklearn.model_selection import (
 )
 
 from pathlib import Path
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 SAVE_DIR = ROOT / "saved"
 
-with open(ROOT / "config.yaml", "r") as f:
-    config = yaml.safe_load(f)
+label: str
+primary_metric: str
+drop_features: list
+value_mappings: dict
+type_coercion: dict
+missing_handling: dict
+money_cols: list
+numerical_scale_cols: list
+onehot_cols: list
+freq_cols: list
+ordinal_cols: list
+binned_cols: list
+hash_cols: list
+model_configs: dict
 
-label = config["general"]["label"]
-primary_metric = config["general"]["primary_metric"]
-drop_features = config["preprocessing"]["drop_features"]
-value_mappings = config["preprocessing"]["value_mappings"]
-type_coercion = config["preprocessing"]["type_coercion"]
-missing_handling = config["preprocessing"]["missing_handling"]
-money_cols = config["preprocessing"]["money_cols"]
+def load_config():
+    with open(ROOT / "config.yaml", "r") as f:
+        config = yaml.safe_load(f)
 
-numerical_scale_cols = config["encoding"]["numerical_scale_cols"]
-onehot_cols = config["encoding"]["onehot_cols"]
-freq_cols = config["encoding"]["freq_cols"]
-ordinal_cols = config["encoding"]["ordinal_cols"]
-binned_cols = config["encoding"]["binned_cols"]
-hash_cols = config["encoding"]["hash_cols"]
+    globals().update({
+        "config": config,
+        "label": config["general"]["label"],
+        "primary_metric": config["general"]["primary_metric"],
+        "drop_features": config["preprocessing"]["drop_features"],
+        "value_mappings": config["preprocessing"]["value_mappings"],
+        "type_coercion": config["preprocessing"]["type_coercion"],
+        "missing_handling": config["preprocessing"]["missing_handling"],
+        "money_cols": config["preprocessing"]["money_cols"],
+        "numerical_scale_cols": config["encoding"]["numerical_scale_cols"],
+        "onehot_cols": config["encoding"]["onehot_cols"],
+        "freq_cols": config["encoding"]["freq_cols"],
+        "ordinal_cols": config["encoding"]["ordinal_cols"],
+        "binned_cols": config["encoding"]["binned_cols"],
+        "hash_cols": config["encoding"]["hash_cols"],
+        "model_configs": config.get("model_configs", {})
+    })
 
-model_configs = config["model_configs"]
+load_config()
 
 from sklearn.dummy import DummyClassifier
 from sklearn.linear_model import LogisticRegression
@@ -201,6 +220,8 @@ def auto_config_from_data(X, CONFIG_PATH):
     # Write out
     with open(CONFIG_PATH, "w") as f:
         yaml.dump(config, f)
+
+    load_config()
 
     print(f"Updated drop_features: {sorted(drop_features)}")
     print(f"Updated value_mappings: {sorted(value_mappings)}")
@@ -366,8 +387,6 @@ cleaning_pipeline = Pipeline([
     ('coerce_types', coercer)
 ])
 
-
-
 preprocessor = ColumnTransformer([
     ('num', StandardScaler(), numerical_scale_cols),
     ('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=False), onehot_cols),
@@ -377,7 +396,7 @@ preprocessor = ColumnTransformer([
     ('hashed', hash_transformer, hash_cols)
 ], remainder='passthrough')
 preprocessor.set_output(transform='pandas')
-    
+
 
 
 # Pipeline, evaluation, and analysis
