@@ -246,17 +246,23 @@ def show_categorical_uniques(df, limit=10):
 
 
 def show_missing_data(df):
-    # Check missing data percentages per column
     if df.isna().sum().sum() > 0:
         missing_counts = df.isna().sum()
-
-        # Print columns with missing data
         print('Missing values detected in:')
         print(missing_counts[missing_counts > 0])
 
-        # Plot
-        msno.matrix(df, figsize=(8.5, 4), fontsize=10)
+        # Limit to just columns with missing values
+        missing_cols = df.loc[:, df.isna().any()]
+
+        # Adjust figure size based on number of columns
+        num_cols = missing_cols.shape[1]
+        width = min(8, num_cols * 1.2)  # max width 8, scale with # columns
+        height = 4
+
+        plt.figure(figsize=(width, height))
+        msno.matrix(missing_cols, figsize=(width, height), fontsize=10)
         plt.title('Missing Data by Column')
+        plt.tight_layout()
         plt.show()
     else:
         print("No missing data found!")
