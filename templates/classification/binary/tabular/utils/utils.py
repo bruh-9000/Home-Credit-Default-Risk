@@ -439,17 +439,19 @@ preprocessor.set_output(transform='pandas')
 
 
 
-def build_pipeline():
+def build_pipeline(name):
     steps = [
         ('cleaning', cleaning_pipeline),
         ('preprocessing', preprocessor),
     ]
 
     if resampling_type == 'over':
-        steps.append(('resample', SMOTEENN(sampling_strategy=0.5, random_state=42)))
+        steps.append(('resample', SMOTEENN(sampling_strategy=resampling_strategy, random_state=42)))
     elif resampling_type == 'under':
-        steps.append(('resample', RandomUnderSampler(sampling_strategy=0.5, random_state=42)))
+        steps.append(('resample', RandomUnderSampler(sampling_strategy=resampling_strategy, random_state=42)))
     # Else: skip resampling entirely
+
+    steps.append(('model', models[name]))
 
     return ImbPipeline(steps)
 
@@ -555,7 +557,7 @@ def train_pipeline(name, X_train, y_train):
     param_grid = config.get('param_grid', {})
     n_iter = config.get('n_iter', 10)
 
-    pipe = build_pipeline()
+    pipe = build_pipeline(name)
 
     if search_type == 'grid':
         search = GridSearchCV(pipe, param_grid=param_grid, cv=skf, scoring=primary_metric, n_jobs=-1)

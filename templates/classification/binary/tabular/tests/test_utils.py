@@ -5,7 +5,7 @@ import joblib
 from sklearn.pipeline import Pipeline
 from sklearn.dummy import DummyClassifier
 
-ROOT = Path(__file__).resolve().parents[1] / 'templates' / 'classification_binary'
+ROOT = Path(__file__).resolve().parents[1] / 'templates' / 'classification' / 'binary' / 'tabular'
 sys.path.append(str(ROOT))
 
 from utils.utils import prepare_train_test_split
@@ -26,7 +26,7 @@ def test_prepare_train_test_split_multi_file():
         'CourseCategory': ['A', 'B']
     })
 
-    X, y, X_train, X_test, y_train, y_test = prepare_train_test_split(train_df, test_df, 'CourseCompletion')
+    X, y, X_train, X_test, y_train, y_test = prepare_train_test_split(train_df, test_df)
 
     assert y_train.equals(train_df['CourseCompletion'])
     assert y_test.equals(test_df['CourseCompletion'])
