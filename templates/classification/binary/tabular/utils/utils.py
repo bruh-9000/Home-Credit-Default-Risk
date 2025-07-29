@@ -482,14 +482,13 @@ def evaluate_pipeline(name, data):
     cv_preds, cv_probs = get_cv_predictions(pipe, X_train, y_train)
 
     print(f"\n{name} - TRAIN CV METRICS:")
-    get_analysis(y_train, cv_preds, cv_probs)
+    output_metrics = get_analysis(y_train, cv_preds, cv_probs)
 
     y_preds = y_probs = output_metrics = None
     if has_test_labels:
         y_preds, y_probs = predict_pipeline(pipe, X_test)
         print(f"\n{name} - TEST METRICS:")
-        test_metrics = get_analysis(y_test, y_preds, y_probs)
-        output_metrics = test_metrics
+        output_metrics = get_analysis(y_test, y_preds, y_probs)
 
         if not model_configs.get(name, {}).get("baseline", False):
             X_train_transformed = pipe[:-1].transform(X_train)
@@ -586,6 +585,8 @@ False Negative Rate: {fnr:.2%}
         values['Roc_auc'] = roc_auc
 
     print(report)
+
+    return values
 
 
 
