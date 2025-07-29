@@ -407,6 +407,23 @@ hash_transformer = NamedFunctionTransformer(
 
 
 
+class FoldedTargetEncoder(BaseEstimator, TransformerMixin):
+    def __init__(self, n_splits=5, random_state=42):
+        self.n_splits = n_splits
+        self.random_state = random_state
+        self.encoders = []
+        self.global_encoder = None
+
+    def fit(self, X, y):
+        self.global_encoder = TargetEncoder()
+        self.global_encoder.fit(X, y)
+        return self
+
+    def transform(self, X):
+        return self.global_encoder.transform(X)
+
+
+
 cleaning_pipeline = Pipeline([
     ('drop_columns', dropper),
     ('keep_columns', keeper),
@@ -420,7 +437,7 @@ preprocessor = ColumnTransformer([
     ('nums', StandardScaler(), numerical_scale_cols),
     ('oneh', OneHotEncoder(handle_unknown='ignore', sparse_output=False), onehot_cols),
     ('freq', CountEncoder(normalize=True), freq_cols),
-    ('targ', TargetEncoder(cv=skf), target_cols),
+    ('targ', FoldedTargetEncoder(), target_cols),
     ('ordi', OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1), ordinal_cols),
     ('bins', KBinsDiscretizer(n_bins=5, encode='ordinal', strategy='quantile'), binned_cols),
     ('hash', hash_transformer, hash_cols)
