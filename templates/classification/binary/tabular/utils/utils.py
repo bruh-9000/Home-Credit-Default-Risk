@@ -453,7 +453,7 @@ def evaluate_pipeline(name, data):
     if has_test_labels:
         y_preds, y_probs = predict_pipeline(pipe, X_test)
         print(f'\n{name} - TEST METRICS:')
-        test_metrics = get_analysis(y_test, y_preds)
+        test_metrics = get_analysis(y_test, y_preds, y_probs)
         output_metrics = test_metrics
 
         if not model_configs.get(name, {}).get('baseline', False):
@@ -463,7 +463,7 @@ def evaluate_pipeline(name, data):
     elif y_val is not None:
         y_preds, y_probs = predict_pipeline(pipe, X_val)
         print(f'\n{name} - VALIDATION METRICS:')
-        val_metrics = get_analysis(y_val, y_preds)
+        val_metrics = get_analysis(y_val, y_preds, y_probs)
         output_metrics = val_metrics
 
         if not model_configs.get(name, {}).get('baseline', False):
@@ -513,7 +513,7 @@ def train_pipeline(name, X_train, y_train):
 
 
 
-def get_analysis(y_test, y_preds):
+def get_analysis(y_test, y_preds, y_probs=None):
     tn, fp, fn, tp = confusion_matrix(y_test, y_preds).ravel()
     accuracy = accuracy_score(y_test, y_preds)
     f1 = f1_score(y_test, y_preds)
@@ -523,6 +523,9 @@ def get_analysis(y_test, y_preds):
     fpr = fp / (fp + tn)
     fnr = fn / (fn + tp)
 
+    # ROC AUC only if probabilities are passed
+    roc_auc = roc_auc_score(y_test, y_probs) if y_probs is not None else None
+
     report = f'''
 Accuracy: {accuracy:.2%}
 F1 Score: {f1:.2%}
@@ -531,6 +534,7 @@ True Positive Rate (Recall): {recall:.2%}
 True Negative Rate (Specificity): {specificity:.2%}
 False Positive Rate: {fpr:.2%}
 False Negative Rate: {fnr:.2%}
+{'ROC AUC: {:.2%}'.format(roc_auc) if roc_auc is not None else ''}
 '''
     
     values = {
@@ -542,6 +546,9 @@ False Negative Rate: {fnr:.2%}
         'FPR': fpr,
         'FNR': fnr
     }
+
+    if roc_auc is not None:
+        values['Roc_auc'] = roc_auc
 
     print(report)
 
