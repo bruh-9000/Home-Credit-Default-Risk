@@ -17,7 +17,7 @@ from matplotlib import pyplot as plt
 import missingno as msno
 import seaborn as sns
 import shap
-from sklearn.base import BaseEstimator, TransformerMixin, clone
+from sklearn.base import clone
 from sklearn.compose import ColumnTransformer
 from sklearn.dummy import DummyClassifier
 from sklearn.ensemble import RandomForestClassifier
@@ -31,14 +31,14 @@ from sklearn.metrics import (
     recall_score,
     roc_auc_score,
     roc_curve,
-    precision_recall_curve,
+    precision_recall_curve
 )
 from sklearn.model_selection import (
     GridSearchCV,
     RandomizedSearchCV,
     StratifiedKFold,
     cross_val_score,
-    train_test_split,
+    train_test_split
 )
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import (
@@ -47,6 +47,7 @@ from sklearn.preprocessing import (
     OneHotEncoder,
     OrdinalEncoder,
     StandardScaler,
+    TargetEncoder
 )
 
 warnings.filterwarnings("ignore")
@@ -407,23 +408,6 @@ hash_transformer = NamedFunctionTransformer(
 
 
 
-class FoldedTargetEncoder(BaseEstimator, TransformerMixin):
-    def __init__(self, n_splits=5, random_state=42):
-        self.n_splits = n_splits
-        self.random_state = random_state
-        self.encoders = []
-        self.global_encoder = None
-
-    def fit(self, X, y):
-        self.global_encoder = TargetEncoder()
-        self.global_encoder.fit(X, y)
-        return self
-
-    def transform(self, X):
-        return self.global_encoder.transform(X)
-
-
-
 cleaning_pipeline = Pipeline([
     ('drop_columns', dropper),
     ('keep_columns', keeper),
@@ -437,7 +421,7 @@ preprocessor = ColumnTransformer([
     ('nums', StandardScaler(), numerical_scale_cols),
     ('oneh', OneHotEncoder(handle_unknown='ignore', sparse_output=False), onehot_cols),
     ('freq', CountEncoder(normalize=True), freq_cols),
-    ('targ', FoldedTargetEncoder(), target_cols),
+    ('targ', TargetEncoder(cv=skf), target_cols),
     ('ordi', OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1), ordinal_cols),
     ('bins', KBinsDiscretizer(n_bins=5, encode='ordinal', strategy='quantile'), binned_cols),
     ('hash', hash_transformer, hash_cols)
@@ -692,6 +676,7 @@ def evaluate_pipeline(name, data):
     if not model_configs.get(name, {}).get("baseline", False):
         joblib.dump(pipe, SAVE_DIR / f"{name}_pipeline.pkl")
     return pipe, output_metrics
+
 
 
 def summarize_model_results(model_data, primary_metric, metrics_to_display, pipelines=None):
