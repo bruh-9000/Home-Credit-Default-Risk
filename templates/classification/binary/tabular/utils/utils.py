@@ -10,7 +10,6 @@ from IPython.display import display, Markdown
 from ruamel.yaml import YAML
 from category_encoders import CountEncoder, HashingEncoder, TargetEncoder
 from imblearn.combine import SMOTEENN
-from imblearn.pipeline import Pipeline as ImbPipeline
 from imblearn.under_sampling import RandomUnderSampler
 from lightgbm import LGBMClassifier
 from matplotlib import pyplot as plt
@@ -472,20 +471,20 @@ def train_pipeline(name, X_train, y_train):
     param_grid = config.get('param_grid', {})
     n_iter = config.get('n_iter', 10)
 
-    cleaning_transformer = FunctionTransformer(cleaning_pipeline.fit_transform(X_train), validate=False)
+    if resampling_type == 'over':
+        sampler = SMOTEENN(sampling_strategy=resampling_strategy, random_state=42)
+        X_train, y_train = sampler.fit_resample(X_train, y_train)
+    elif resampling_type == 'under':
+        sampler = RandomUnderSampler(sampling_strategy=resampling_strategy, random_state=42)
+        X_train, y_train = sampler.fit_resample(X_train, y_train)
+
     steps = [
-        ('cleaning', cleaning_transformer),
+        ('cleaning', cleaning_pipeline),
         ('preprocessing', preprocessor),
+        ('model', models[name])
     ]
 
-    if resampling_type == 'over':
-        steps.append(('resample', SMOTEENN(sampling_strategy=resampling_strategy, random_state=42)))
-    elif resampling_type == 'under':
-        steps.append(('resample', RandomUnderSampler(sampling_strategy=resampling_strategy, random_state=42)))
-
-    steps.append(('model', models[name]))
-
-    pipe = ImbPipeline(steps)
+    pipe = Pipeline(steps)
 
     if search_type == 'grid':
         search = GridSearchCV(pipe, param_grid=param_grid, cv=skf, scoring=primary_metric, n_jobs=-1)
