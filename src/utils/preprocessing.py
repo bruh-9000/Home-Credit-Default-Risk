@@ -198,6 +198,26 @@ preprocessor = ColumnTransformer([
 preprocessor.set_output(transform='pandas')
 
 
+def build_preprocessor(feature_columns):
+    """Create a ColumnTransformer using only columns that exist in the data."""
+
+    def filter_cols(cols):
+        return [c for c in cols if c in feature_columns]
+
+    proc = ColumnTransformer([
+        ('nums', StandardScaler(), filter_cols(numerical_scale_cols)),
+        ('oneh', OneHotEncoder(handle_unknown='ignore', sparse_output=False), filter_cols(onehot_cols)),
+        ('freq', CountEncoder(normalize=True), filter_cols(freq_cols)),
+        ('targ', TargetEncoder(cv=cv_splits), filter_cols(target_cols)),
+        ('ordi', OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1), filter_cols(ordinal_cols)),
+        ('bins', KBinsDiscretizer(n_bins=5, encode='ordinal', strategy='quantile'), filter_cols(binned_cols)),
+        ('hash', hash_transformer, filter_cols(hash_cols))
+    ], remainder='passthrough')
+    proc.set_output(transform='pandas')
+
+    return proc
+
+
 
 def show_categorical_uniques(df, limit=10):
     for col in df.select_dtypes(include=['object', 'category']).columns:

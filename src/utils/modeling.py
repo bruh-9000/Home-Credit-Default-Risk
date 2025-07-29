@@ -28,7 +28,11 @@ from src.utils.config import (
     model_configs
 )
 
-from src.utils.preprocessing import cleaning_pipeline, preprocessor
+from src.utils.preprocessing import (
+    cleaning_pipeline,
+    preprocessor,
+    build_preprocessor
+)
 
 skf = StratifiedKFold(n_splits=cv_splits, shuffle=True, random_state=42)
 
@@ -99,14 +103,17 @@ def train_pipeline(name, X_train, y_train):
         sampler = RandomUnderSampler(sampling_strategy=resampling_strategy, random_state=42)
         X_train, y_train = resample_and_restore(X_train, y_train, sampler)
 
+    X_train = pd.DataFrame(X_train).reset_index(drop=True)
+    y_train = pd.Series(y_train).reset_index(drop=True)
+
+    dynamic_preprocessor = build_preprocessor(X_train.columns)
+
     pipe = Pipeline([
         ('cleaning', cleaning_pipeline),
-        ('encoding', preprocessor),
+        ('encoding', dynamic_preprocessor),
         ('model', models[name])
     ])
 
-    X_train = pd.DataFrame(X_train).reset_index(drop=True)
-    y_train = pd.Series(y_train).reset_index(drop=True)
 
     if search_type in ['grid', 'random']:
         if search_type == 'grid':
