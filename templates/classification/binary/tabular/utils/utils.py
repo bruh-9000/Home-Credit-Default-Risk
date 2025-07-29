@@ -1,45 +1,57 @@
 import warnings
-warnings.filterwarnings("ignore")
-import numpy as np
-np.random.seed(42)
-import joblib
-import yaml
 import re
-from ruamel.yaml import YAML
+from pathlib import Path
+
+import joblib
+import numpy as np
 import pandas as pd
+import yaml
 from IPython.display import display, Markdown
-from sklearn.compose import ColumnTransformer
-from sklearn.preprocessing import (
-    StandardScaler,
-    OneHotEncoder,
-    OrdinalEncoder,
-    KBinsDiscretizer,
-    FunctionTransformer,
-)
-from sklearn.base import (
-    BaseEstimator,
-    TransformerMixin,
-    clone
-)
-from category_encoders import (
-    HashingEncoder,
-    TargetEncoder,
-    CountEncoder
-)
-from sklearn.pipeline import Pipeline
+from ruamel.yaml import YAML
+from category_encoders import CountEncoder, HashingEncoder, TargetEncoder
+from imblearn.combine import SMOTEENN
 from imblearn.pipeline import Pipeline as ImbPipeline
+from imblearn.under_sampling import RandomUnderSampler
+from lightgbm import LGBMClassifier
+from matplotlib import pyplot as plt
+import missingno as msno
+import seaborn as sns
+import shap
+from sklearn.base import BaseEstimator, TransformerMixin, clone
+from sklearn.compose import ColumnTransformer
+from sklearn.dummy import DummyClassifier
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import (
+    accuracy_score,
+    average_precision_score,
+    confusion_matrix,
+    f1_score,
+    precision_score,
+    recall_score,
+    roc_auc_score,
+    roc_curve,
+    precision_recall_curve,
+)
 from sklearn.model_selection import (
-    train_test_split,
-    StratifiedKFold,
     GridSearchCV,
     RandomizedSearchCV,
+    StratifiedKFold,
     cross_val_score,
+    train_test_split,
+)
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import (
+    FunctionTransformer,
+    KBinsDiscretizer,
+    OneHotEncoder,
+    OrdinalEncoder,
+    StandardScaler,
 )
 
-from imblearn.combine import SMOTEENN
-from imblearn.under_sampling import RandomUnderSampler
+warnings.filterwarnings("ignore")
+np.random.seed(42)
 
-from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SAVE_DIR = ROOT / "saved"
 
@@ -103,28 +115,6 @@ def load_config():
 load_config()
 
 skf = StratifiedKFold(n_splits=cv_splits, shuffle=True, random_state=42)
-
-from sklearn.dummy import DummyClassifier
-from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import RandomForestClassifier
-from lightgbm import LGBMClassifier
-from sklearn.metrics import (
-    accuracy_score,
-    average_precision_score,
-    confusion_matrix,
-    f1_score,
-    precision_score,
-    recall_score,
-    roc_auc_score,
-    roc_curve,
-    precision_recall_curve,
-)
-import shap
-import seaborn as sns
-from matplotlib import pyplot as plt
-import missingno as msno
-
-
 
 def load_data(file_one, file_two=None):
     df1 = pd.read_csv(file_one)
@@ -503,51 +493,6 @@ def get_cv_predictions(pipe, X, y, cv=5):
 
 
 
-def evaluate_pipeline(name, data):
-    X_full, X_train, y_train, X_test, y_test = data
-
-    # Get label mapping from config
-    label_mapping = value_mappings.get(label)
-
-    # Apply label mapping to y_train/y_test
-    if label_mapping:
-        y_train = y_train.map(label_mapping)
-        if y_test is not None:
-            y_test = y_test.map(label_mapping)
-
-    # Check whether there are test labels
-    has_test_labels = y_test is not None and not pd.isna(y_test).all()
-
-    # Train the pipeline
-    pipe = train_pipeline(name, X_train, y_train)
-    model = pipe.named_steps['model']
-
-    # Generate out-of-fold predictions for CV on training set
-    cv_preds, cv_probs = get_cv_predictions(pipe, X_train, y_train)
-
-    # Train metrics
-    y_train_preds = pipe.predict(X_train)
-    print(f'\n{name} - TRAIN METRICS:')
-    train_metrics = get_analysis(y_train, y_train_preds) # Var not used, but func prints stuff
-
-    y_preds = y_probs = output_metrics = None
-
-    # Use test set if labels exist
-    if has_test_labels:
-        y_preds, y_probs = predict_pipeline(pipe, X_test)
-        print(f'\n{name} - TEST METRICS:')
-        test_metrics = get_analysis(y_test, y_preds, y_probs)
-        output_metrics = test_metrics
-
-        if not model_configs.get(name, {}).get('baseline', False):
-            generate_graphs(model, X_train, y_test, y_preds, y_probs)
-
-    else:
-        print(f'\n{name} - SKIPPING TEST (no labels)')
-
-    if not model_configs.get(name, {}).get('baseline', False):
-        joblib.dump(pipe, SAVE_DIR / f"{name}_pipeline.pkl")
-    return pipe, output_metrics
 
 
 
@@ -693,6 +638,43 @@ def plot_shap_summary(model, X_train, num_samples=20):
 
     shap.summary_plot(shap_values, X_sample, feature_names=features, plot_type='bar', plot_size=[8, 4])
 
+
+
+def evaluate_pipeline(name, data):
+    X_full, X_train, y_train, X_test, y_test = data
+
+    label_mapping = value_mappings.get(label)
+    if label_mapping:
+        y_train = y_train.map(label_mapping)
+        if y_test is not None:
+            y_test = y_test.map(label_mapping)
+
+    has_test_labels = y_test is not None and not pd.isna(y_test).all()
+
+    pipe = train_pipeline(name, X_train, y_train)
+    model = pipe.named_steps['model']
+
+    cv_preds, cv_probs = get_cv_predictions(pipe, X_train, y_train)
+
+    y_train_preds = pipe.predict(X_train)
+    print(f"\n{name} - TRAIN METRICS:")
+    train_metrics = get_analysis(y_train, y_train_preds)
+
+    y_preds = y_probs = output_metrics = None
+    if has_test_labels:
+        y_preds, y_probs = predict_pipeline(pipe, X_test)
+        print(f"\n{name} - TEST METRICS:")
+        test_metrics = get_analysis(y_test, y_preds, y_probs)
+        output_metrics = test_metrics
+
+        if not model_configs.get(name, {}).get("baseline", False):
+            generate_graphs(model, X_train, y_test, y_preds, y_probs)
+    else:
+        print(f"\n{name} - SKIPPING TEST (no labels)")
+
+    if not model_configs.get(name, {}).get("baseline", False):
+        joblib.dump(pipe, SAVE_DIR / f"{name}_pipeline.pkl")
+    return pipe, output_metrics
 
 
 def summarize_model_results(model_data, primary_metric, metrics_to_display, pipelines=None):
