@@ -1,0 +1,123 @@
+general:
+  main_file_path: ../data/data.csv
+  bureau_file_path: ../data/bureau.csv
+  bureaubal_file_path: ../data/bureau_balance.csv
+  prevapp_file_path: ../data/previous_application.csv
+  label: TARGET
+  primary_metric: roc_auc
+  threshold: .5
+  cv_splits: 5
+  resampling_type: under # under, over, none
+  resampling_strategy: .5
+  drop_or_keep: keep # drop is blacklist, keep is whitelist
+
+preprocessing:
+  drop_features: []
+  keep_features: [
+    CODE_GENDER, FLAG_OWN_CAR, AMT_INCOME_TOTAL, AMT_CREDIT, AMT_ANNUITY, REGION_POPULATION_RELATIVE, DAYS_BIRTH, DAYS_EMPLOYED, DAYS_REGISTRATION, DAYS_ID_PUBLISH, FLAG_WORK_PHONE, OCCUPATION_TYPE,
+    NAME_HOUSING_TYPE, CNT_FAM_MEMBERS, REGION_RATING_CLIENT, ORGANIZATION_TYPE, EXT_SOURCE_1, EXT_SOURCE_2, EXT_SOURCE_3, DAYS_LAST_PHONE_CHANGE, AMT_REQ_CREDIT_BUREAU_YEAR, FLAG_DOCUMENT_3,
+    HOUR_APPR_PROCESS_START, OWN_CAR_AGE, APARTMENTS_AVG,
+    CREDIT_CLOSED_CNT, CREDIT_ACTIVE_CNT, DAYS_CREDIT_MEAN, DAYS_CREDIT_ENDDATE_MEAN, AMT_CREDIT_SUM_MEAN, AMT_CREDIT_SUM_DEBT_MEAN, AMT_CREDIT_SUM_LIMIT_MEAN, DAYS_CREDIT_UPDATE_MEAN, # bureau.csv
+    OLDEST_BALANCE_MONTH_MEAN, # bureau_balance.csv
+    AMT_DOWN_PAYMENT_MEAN, CNT_CONTSTATUS_APPROVED, CNT_CONTSTATUS_REFUSED, CNT_CONTSTATUS_CANCELED, CNT_REPEAT_CLIENT, YIELD_SCORE_MEAN, INSURED_MEAN, # previous_application.csv
+    NAME_FAMILY_STATUS_Married, ANY_DOC_FLAGGED, HEAVILY_OVERFINANCED, EXPECTED_TERM, # Synthetic features
+  ]
+  value_mappings:
+    CODE_GENDER:
+      F: 1
+      M: 0
+      XNA: 0
+    FLAG_OWN_CAR:
+      Y: 1
+      N: 0
+  type_coercion: {}
+  money_cols: [] # Columns to convert from money to int. Ex. '$1.00' to 1.00
+  missing_handling: # 'drop', 'mean', 'median', 'mode', 'prior', or specific value
+    DAYS_LAST_PHONE_CHANGE: median
+    AMT_REQ_CREDIT_BUREAU_YEAR: mean
+    EXT_SOURCE_1: mean
+    EXT_SOURCE_2: mean
+    EXT_SOURCE_3: mean
+    CNT_FAM_MEMBERS: median
+    AMT_ANNUITY: mean
+    OCCUPATION_TYPE: 'Unknown'
+    WEEKDAY_APPR_PROCESS_START: prior
+    HOUR_APPR_PROCESS_START: mode
+    NAME_HOUSING_TYPE: mean
+    CREDIT_CLOSED_CNT: -1
+    CREDIT_ACTIVE_CNT: -1
+    DAYS_CREDIT_MEAN: mean
+    DAYS_CREDIT_ENDDATE_MEAN: mean
+    AMT_CREDIT_SUM_MEAN: mean
+    AMT_CREDIT_SUM_DEBT_MEAN: mean
+    AMT_CREDIT_SUM_LIMIT_MEAN: mean
+    DAYS_CREDIT_UPDATE_MEAN: mean
+    OLDEST_BALANCE_MONTH_MEAN: -1
+    AMT_DOWN_PAYMENT_MEAN: -1
+    CNT_CONTSTATUS_APPROVED: 0
+    CNT_CONTSTATUS_REFUSED: 0
+    CNT_CONTSTATUS_CANCELED: 0
+    CNT_REPEAT_CLIENT: 0
+    YIELD_SCORE_MEAN: mean
+    INSURED_MEAN: mean
+    OWN_CAR_AGE: mean
+    APARTMENTS_AVG: 0
+    EXPECTED_TERM: mean
+    Percent_Employed: mean
+
+encoding:
+  numerical_scale_cols: []
+  onehot_cols: []
+  freq_cols: [NAME_HOUSING_TYPE, AMT_REQ_CREDIT_BUREAU_YEAR]
+  target_cols: [OCCUPATION_TYPE, ORGANIZATION_TYPE]
+  ordinal_cols: []
+  binned_cols: []
+  hash_cols: []
+
+model_configs:
+  dummy_classifier:
+    search_type:
+    baseline: true
+    param_grid: {}
+
+  logistic_regression:
+    search_type: grid
+    baseline: false
+    param_grid:
+      model__C: [0.01, 0.1]
+      model__penalty: [l1, l2]
+      model__solver: [lbfgs]
+      model__class_weight: [balanced]
+
+  random_forest:
+    search_type: random
+    baseline: false
+    n_iter: 1
+    param_grid:
+      model__max_depth: [5, 6, 8, 10]
+      model__min_samples_split: [10, 50, 75, 100]
+      model__min_samples_leaf: [1, 4, 8, 10, 20]
+      model__max_leaf_nodes: [20, 40, 80, 100]
+      model__n_estimators: [100, 130, 170, 200]
+      model__max_samples: [0.15, 0.2, 0.3, 0.5]
+      model__max_features: [sqrt, log2, 0.5]
+      model__criterion: [gini, entropy]
+      model__class_weight: [balanced]
+
+  lightgbm:
+    search_type: random
+    baseline: false
+    n_iter: 35
+    param_grid:
+      model__max_depth: [5, 6, 7, 8, 9]
+      model__n_estimators: [150, 250, 300, 350]
+      model__learning_rate: [0.01, 0.03, 0.05, 0.06]
+      model__num_leaves: [15, 20, 30, 50, 70]
+      model__min_child_samples: [20, 50, 100, 125]
+      model__min_split_gain: [0.01, 0.1, 0.5, 1]
+      model__subsample: [0.5, 0.6, 0.75, 0.9]
+      model__bagging_freq: [0, 1, 5, 7]
+      model__colsample_bytree: [0.5, 0.6, 0.8, 1]
+      model__reg_alpha: [0.1, 1, 5, 10]
+      model__reg_lambda: [0.5, 1, 5, 10]
+      model__class_weight: [balanced]
