@@ -523,19 +523,19 @@ def train_pipeline(name, X_train, y_train):
 
     pipe = Pipeline(steps)
 
-    if search_type == 'grid':
-        search = GridSearchCV(pipe, param_grid=param_grid, cv=skf, scoring=primary_metric, n_jobs=-1)
-        search.fit(X_train, y_train)
-        pipe = search.best_estimator_
-        print(f'\nBest hyperparameters for {name} (GridSearchCV):')
-        print(search.best_params_)
+    X_train, y_train = X_train.reset_index(drop=True), y_train.reset_index(drop=True)
 
-    elif search_type == 'random':
-        search = RandomizedSearchCV(pipe, param_distributions=param_grid, n_iter=n_iter, cv=skf,
-                                    scoring=primary_metric, n_jobs=-1)
+    if search_type in ['grid', 'random']:
+        if search_type == 'grid':
+            search = GridSearchCV(pipe, param_grid=param_grid, cv=skf, scoring=primary_metric, n_jobs=-1)
+
+        elif search_type == 'random':
+            search = RandomizedSearchCV(pipe, param_distributions=param_grid, n_iter=n_iter, cv=skf,
+                                        scoring=primary_metric, n_jobs=-1)
+        
         search.fit(X_train, y_train)
         pipe = search.best_estimator_
-        print(f'\nBest hyperparameters for {name} (RandomizedSearchCV):')
+        print(f'\nBest hyperparameters:')
         print(search.best_params_)
 
     else:
