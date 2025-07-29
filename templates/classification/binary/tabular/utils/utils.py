@@ -465,6 +465,44 @@ def get_cv_predictions(pipe, X, y, cv=5):
 
 
 
+def evaluate_pipeline(name, data):
+    X_full, X_train, y_train, X_test, y_test = data
+
+    label_mapping = value_mappings.get(label)
+    if label_mapping:
+        y_train = y_train.map(label_mapping)
+        if y_test is not None:
+            y_test = y_test.map(label_mapping)
+
+    has_test_labels = y_test is not None and not pd.isna(y_test).all()
+
+    pipe = train_pipeline(name, X_train, y_train)
+    model = pipe.named_steps['model']
+
+    cv_preds, cv_probs = get_cv_predictions(pipe, X_train, y_train)
+
+    print(f"\n{name} - TRAIN CV METRICS:")
+    get_analysis(y_train, cv_preds, cv_probs)
+
+    y_preds = y_probs = output_metrics = None
+    if has_test_labels:
+        y_preds, y_probs = predict_pipeline(pipe, X_test)
+        print(f"\n{name} - TEST METRICS:")
+        test_metrics = get_analysis(y_test, y_preds, y_probs)
+        output_metrics = test_metrics
+
+        if not model_configs.get(name, {}).get("baseline", False):
+            X_train_transformed = pipe[:-1].transform(X_train)
+            generate_graphs(model, X_train_transformed, y_test, y_preds, y_probs)
+    else:
+        print(f"\n{name} - SKIPPING TEST (no labels)")
+
+    if not model_configs.get(name, {}).get("baseline", False):
+        joblib.dump(pipe, SAVE_DIR / f"{name}_pipeline.pkl")
+    return pipe, output_metrics
+
+
+
 def train_pipeline(name, X_train, y_train):
     config = model_configs.get(name, {})
     search_type = config.get('search_type')
@@ -510,18 +548,18 @@ def train_pipeline(name, X_train, y_train):
 
 
 
-def get_analysis(y_test, y_preds, y_probs=None):
-    tn, fp, fn, tp = confusion_matrix(y_test, y_preds).ravel()
-    accuracy = accuracy_score(y_test, y_preds)
-    f1 = f1_score(y_test, y_preds)
-    recall = recall_score(y_test, y_preds)
-    precision = precision_score(y_test, y_preds)
+def get_analysis(y_var, y_preds, y_probs=None):
+    tn, fp, fn, tp = confusion_matrix(y_var, y_preds).ravel()
+    accuracy = accuracy_score(y_var, y_preds)
+    f1 = f1_score(y_var, y_preds)
+    recall = recall_score(y_var, y_preds)
+    precision = precision_score(y_var, y_preds)
     specificity = tn / (tn + fp)
     fpr = fp / (fp + tn)
     fnr = fn / (fn + tp)
 
     # ROC AUC only if probabilities are passed
-    roc_auc = roc_auc_score(y_test, y_probs) if y_probs is not None else None
+    roc_auc = roc_auc_score(y_var, y_probs) if y_probs is not None else None
 
     report = f'''
 Accuracy: {accuracy:.2%}
@@ -548,8 +586,6 @@ False Negative Rate: {fnr:.2%}
         values['Roc_auc'] = roc_auc
 
     print(report)
-
-    return values
 
 
 
@@ -619,44 +655,6 @@ def plot_shap_summary(model, X_train, num_samples=20):
         shap_values = shap_values[1]
 
     shap.summary_plot(shap_values, X_sample, feature_names=features, plot_type='bar', plot_size=[8, 4])
-
-
-
-def evaluate_pipeline(name, data):
-    X_full, X_train, y_train, X_test, y_test = data
-
-    label_mapping = value_mappings.get(label)
-    if label_mapping:
-        y_train = y_train.map(label_mapping)
-        if y_test is not None:
-            y_test = y_test.map(label_mapping)
-
-    has_test_labels = y_test is not None and not pd.isna(y_test).all()
-
-    pipe = train_pipeline(name, X_train, y_train)
-    model = pipe.named_steps['model']
-
-    cv_preds, cv_probs = get_cv_predictions(pipe, X_train, y_train)
-
-    y_train_preds = pipe.predict(X_train)
-    print(f"\n{name} - TRAIN METRICS:")
-    train_metrics = get_analysis(y_train, y_train_preds)
-
-    y_preds = y_probs = output_metrics = None
-    if has_test_labels:
-        y_preds, y_probs = predict_pipeline(pipe, X_test)
-        print(f"\n{name} - TEST METRICS:")
-        test_metrics = get_analysis(y_test, y_preds, y_probs)
-        output_metrics = test_metrics
-
-        if not model_configs.get(name, {}).get("baseline", False):
-            generate_graphs(model, X_train, y_test, y_preds, y_probs)
-    else:
-        print(f"\n{name} - SKIPPING TEST (no labels)")
-
-    if not model_configs.get(name, {}).get("baseline", False):
-        joblib.dump(pipe, SAVE_DIR / f"{name}_pipeline.pkl")
-    return pipe, output_metrics
 
 
 
