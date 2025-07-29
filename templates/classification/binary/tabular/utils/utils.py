@@ -494,9 +494,6 @@ def get_cv_predictions(pipe, X, y, cv=5):
 
 
 
-
-
-
 def train_pipeline(name, X_train, y_train):
     config = model_configs.get(name, {})
     search_type = config.get('search_type')
