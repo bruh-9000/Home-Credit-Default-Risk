@@ -27,6 +27,7 @@ from category_encoders import (
     CountEncoder
 )
 from sklearn.pipeline import Pipeline
+from imblearn.pipeline import Pipeline as ImbPipeline
 from sklearn.model_selection import (
     train_test_split,
     StratifiedKFold,
@@ -34,6 +35,9 @@ from sklearn.model_selection import (
     RandomizedSearchCV,
     cross_val_score,
 )
+
+from imblearn.combine import SMOTEENN
+from imblearn.under_sampling import RandomUnderSampler
 
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
@@ -43,6 +47,8 @@ label: str
 primary_metric: str
 threshold: float
 cv_splits: int
+resampling_type: str
+resampling_strategy: float
 
 drop_features: list
 keep_features: list
@@ -71,6 +77,8 @@ def load_config():
         "primary_metric": config["general"]["primary_metric"],
         "threshold": config["general"]["threshold"],
         "cv_splits": config["general"]["cv_splits"],
+        "resampling_type": config["general"]["resampling_type"],
+        "resampling_strategy": config["general"]["resampling_strategy"],
 
         "drop_features": config["preprocessing"]["drop_features"],
         "keep_features": config["preprocessing"]["keep_features"],
@@ -137,13 +145,9 @@ def prepare_train_test_split(train_df, test_df):
     y = train_df[label]
 
     if test_df is None:
-        # Case 1: Only one dataset, do train/test split, then val from train
-        X_train_full, X_test, y_train_full, y_test = train_test_split(
+        # Case 1: Only one dataset, do train/test split
+        X_train, X_test, y_train, y_test = train_test_split(
             X, y, test_size=0.2, stratify=y, random_state=42
-        )
-
-        X_train, X_val, y_train, y_val = train_test_split(
-            X_train_full, y_train_full, test_size=0.2, stratify=y_train_full, random_state=42
         )
 
     else:
@@ -157,12 +161,9 @@ def prepare_train_test_split(train_df, test_df):
             # Case 3: Test set is unlabeled
             y_test = None
 
-        # Split train into train/val
-        X_train, X_val, y_train, y_val = train_test_split(
-            X, y, test_size=0.2, stratify=y, random_state=42
-        )
+        X_train, y_train = X, y
 
-    return X, y, X_train, X_test, y_train, y_test, X_val, y_val
+    return X, y, X_train, X_test, y_train, y_test
 
 
 
@@ -419,6 +420,22 @@ preprocessor.set_output(transform='pandas')
 
 
 
+def build_pipeline():
+    steps = [
+        ('cleaning', cleaning_pipeline),
+        ('preprocessing', preprocessor),
+    ]
+
+    if resampling_type == 'over':
+        steps.append(('resample', SMOTEENN(sampling_strategy=0.5, random_state=42)))
+    elif resampling_type == 'under':
+        steps.append(('resample', RandomUnderSampler(sampling_strategy=0.5, random_state=42)))
+    # Else: skip resampling entirely
+
+    return ImbPipeline(steps)
+
+
+
 # Pipeline, evaluation, and analysis
 
 
@@ -466,18 +483,16 @@ def get_cv_predictions(pipe, X, y, cv=5):
 
 
 def evaluate_pipeline(name, data):
-    X_full, X_train, y_train, X_test, y_test, X_val, y_val = data
+    X_full, X_train, y_train, X_test, y_test = data
 
     # Get label mapping from config
     label_mapping = value_mappings.get(label)
 
-    # Apply label mapping to y_train/y_test/y_val
+    # Apply label mapping to y_train/y_test
     if label_mapping:
         y_train = y_train.map(label_mapping)
         if y_test is not None:
             y_test = y_test.map(label_mapping)
-        if y_val is not None:
-            y_val = y_val.map(label_mapping)
 
     # Check whether there are test labels
     has_test_labels = y_test is not None and not pd.isna(y_test).all()
@@ -494,7 +509,7 @@ def evaluate_pipeline(name, data):
     print(f'\n{name} - TRAIN METRICS:')
     train_metrics = get_analysis(y_train, y_train_preds) # Var not used, but func prints stuff
 
-    y_preds = y_probs = None
+    y_preds = y_probs = output_metrics = None
 
     # Use test set if labels exist
     if has_test_labels:
@@ -506,18 +521,8 @@ def evaluate_pipeline(name, data):
         if not model_configs.get(name, {}).get('baseline', False):
             generate_graphs(model, X_train, y_test, y_preds, y_probs)
 
-    # Otherwise fall back to validation set
-    elif y_val is not None:
-        y_preds, y_probs = predict_pipeline(pipe, X_val)
-        print(f'\n{name} - VALIDATION METRICS:')
-        val_metrics = get_analysis(y_val, y_preds, y_probs)
-        output_metrics = val_metrics
-
-        if not model_configs.get(name, {}).get('baseline', False):
-            generate_graphs(model, X_train, y_val, y_preds, y_probs)
-
     else:
-        print(f'\n{name} - SKIPPING TEST & VALIDATION (no labels)')
+        print(f'\n{name} - SKIPPING TEST (no labels)')
 
     if not model_configs.get(name, {}).get('baseline', False):
         joblib.dump(pipe, SAVE_DIR / f"{name}_pipeline.pkl")
@@ -531,9 +536,7 @@ def train_pipeline(name, X_train, y_train):
     param_grid = config.get('param_grid', {})
     n_iter = config.get('n_iter', 10)
 
-    pipe = Pipeline([
-        ('model', models[name])
-    ])
+    pipe = build_pipeline()
 
     if search_type == 'grid':
         search = GridSearchCV(pipe, param_grid=param_grid, cv=skf, scoring=primary_metric, n_jobs=-1)

@@ -5,13 +5,15 @@ general:
   primary_metric: accuracy
   threshold: .5
   cv_splits: 5
+  resampling_type: none # under, over, none
+  resampling_strategy: .5
 
 preprocessing:
   drop_features: []
   value_mappings: {}
   type_coercion: {}
   money_cols: [] # Columns to convert from money to int. Ex. '$1.00' to 1.00
-  missing_handling: {} # 'drop', 'mean', 'median', 'mode', 'prior'
+  missing_handling: {} # drop, mean, median, mode, prior, or a specific value
 
 encoding:
   numerical_scale_cols: []
