@@ -287,27 +287,27 @@ def show_missing_data(df):
 
 def drop_columns(X):
     if drop_or_keep == 'keep':
-        return
+        return X
     
     if isinstance(X, pd.DataFrame):
         to_drop = [col for col in drop_features if col in X.columns]
         X = X.drop(columns=to_drop)
         X = X.reset_index(drop=True)
     return pd.DataFrame(X)
-dropper = FunctionTransformer(drop_columns, validate=False)
+dropper = FunctionTransformer(drop_columns, validate=False, feature_names_out='one-to-one')
 
 
 
 def keep_columns(X):
     if drop_or_keep == 'drop':
-        return
+        return X
 
     if isinstance(X, pd.DataFrame):
         to_keep = [col for col in keep_features if col in X.columns]
         X = X[to_keep].copy()
         X = X.reset_index(drop=True)
     return pd.DataFrame(X)
-keeper = FunctionTransformer(keep_columns, validate=False)
+keeper = FunctionTransformer(keep_columns, validate=False, feature_names_out='one-to-one')
 
 
 
@@ -421,7 +421,7 @@ preprocessor = ColumnTransformer([
     ('nums', StandardScaler(), numerical_scale_cols),
     ('oneh', OneHotEncoder(handle_unknown='ignore', sparse_output=False), onehot_cols),
     ('freq', CountEncoder(normalize=True), freq_cols),
-    ('targ', TargetEncoder(cv=skf), target_cols),
+    ('targ', TargetEncoder(cv=cv_splits), target_cols),
     ('ordi', OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1), ordinal_cols),
     ('bins', KBinsDiscretizer(n_bins=5, encode='ordinal', strategy='quantile'), binned_cols),
     ('hash', hash_transformer, hash_cols)
