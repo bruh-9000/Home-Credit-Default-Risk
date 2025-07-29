@@ -11,6 +11,7 @@ general:
 
 preprocessing:
   drop_features: []
+  keep_features: []
   value_mappings: {}
   type_coercion: {}
   money_cols: [] # Columns to convert from money to int. Ex. '$1.00' to 1.00
