@@ -3,6 +3,8 @@ general:
   file_two_path: ../data/test.csv # test or null
   label: Label
   primary_metric: accuracy
+  threshold: .5
+  cv_splits: 5
 
 preprocessing:
   drop_features: []

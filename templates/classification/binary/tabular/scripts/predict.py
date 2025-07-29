@@ -6,7 +6,7 @@ import joblib
 import yaml
 
 # Paths
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 SAVE_DIR = ROOT / "saved"
 CONFIG_PATH = ROOT / "config.yaml"
 sys.path.append(str(ROOT))
@@ -27,17 +27,18 @@ def load_model(model_name):
 
 
 
-def predict_with_pipeline(pipeline, X):
-    preds = pipeline.predict(X)
-    return preds
+def predict_with_pipeline(pipe, X):
+    config = load_config()
+    threshold = config["general"]["threshold"]
 
+    if hasattr(pipe.named_steps['model'], "predict_proba"):
+        y_probs = pipe.predict_proba(X)[:, 1]
+        y_preds = (y_probs >= threshold).astype(int)
+    else:
+        y_probs = None
+        y_preds = pipe.predict(X)
 
-
-def map_predictions_to_labels(preds, config):
-    label = config["general"]["label"]
-    value_map = config["preprocessing"].get("value_mappings", {}).get(label, {})
-    inverse_map = {v: k for k, v in value_map.items()}
-    return pd.Series(preds).map(inverse_map)
+    return y_preds, y_probs
 
 
 
@@ -60,14 +61,16 @@ def main(model_name):
     X_test = joblib.load(SAVE_DIR / "X_test.pkl")
     raw_test = pd.read_csv(ROOT / "data" / "test.csv")
 
-    if "id" not in raw_test.columns:
-        raise ValueError("Test file must include an 'id' column")
+    cleaning_pipeline = joblib.load(SAVE_DIR / "cleaning_pipeline.pkl")
+    preprocessor = joblib.load(SAVE_DIR / "preprocessor.pkl")
 
-    raw_preds = predict_with_pipeline(pipe, X_test)
-    readable_preds = map_predictions_to_labels(raw_preds, config)
+    X_test = cleaning_pipeline.transform(raw_test)
+    X_test = preprocessor.transform(X_test)
+
+    y_preds = predict_with_pipeline(pipe, X_test)
 
     label = config["general"]["label"]
-    save_submission(raw_test["id"], readable_preds, model_name, label)
+    save_submission(raw_test["id"], y_preds, model_name, label)
 
 
 

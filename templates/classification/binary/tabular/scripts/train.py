@@ -6,7 +6,7 @@ import yaml
 import joblib
 
 # Setup paths
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 SAVE_DIR = ROOT / "saved"
 CONFIG_PATH = ROOT / "config.yaml"
 sys.path.append(str(ROOT))

@@ -16,7 +16,11 @@ from sklearn.preprocessing import (
     KBinsDiscretizer,
     FunctionTransformer,
 )
-from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.base import (
+    BaseEstimator,
+    TransformerMixin,
+    clone
+)
 from category_encoders import (
     HashingEncoder,
     TargetEncoder,
@@ -37,11 +41,16 @@ SAVE_DIR = ROOT / "saved"
 
 label: str
 primary_metric: str
+threshold: float
+cv_splits: int
+
 drop_features: list
+keep_features: list
 value_mappings: dict
 type_coercion: dict
 missing_handling: dict
 money_cols: list
+
 numerical_scale_cols: list
 onehot_cols: list
 freq_cols: list
@@ -49,6 +58,7 @@ target_cols: list
 ordinal_cols: list
 binned_cols: list
 hash_cols: list
+
 model_configs: dict
 
 def load_config():
@@ -59,11 +69,16 @@ def load_config():
         "config": config,
         "label": config["general"]["label"],
         "primary_metric": config["general"]["primary_metric"],
+        "threshold": config["general"]["threshold"],
+        "cv_splits": config["general"]["cv_splits"],
+
         "drop_features": config["preprocessing"]["drop_features"],
+        "keep_features": config["preprocessing"]["keep_features"],
         "value_mappings": config["preprocessing"]["value_mappings"],
         "type_coercion": config["preprocessing"]["type_coercion"],
         "missing_handling": config["preprocessing"]["missing_handling"],
         "money_cols": config["preprocessing"]["money_cols"],
+
         "numerical_scale_cols": config["encoding"]["numerical_scale_cols"],
         "onehot_cols": config["encoding"]["onehot_cols"],
         "freq_cols": config["encoding"]["freq_cols"],
@@ -71,10 +86,13 @@ def load_config():
         "ordinal_cols": config["encoding"]["ordinal_cols"],
         "binned_cols": config["encoding"]["binned_cols"],
         "hash_cols": config["encoding"]["hash_cols"],
+
         "model_configs": config.get("model_configs", {})
     })
 
 load_config()
+
+skf = StratifiedKFold(n_splits=cv_splits, shuffle=True, random_state=42)
 
 from sklearn.dummy import DummyClassifier
 from sklearn.linear_model import LogisticRegression
@@ -392,7 +410,7 @@ preprocessor = ColumnTransformer([
     ('nums', StandardScaler(), numerical_scale_cols),
     ('oneh', OneHotEncoder(handle_unknown='ignore', sparse_output=False), onehot_cols),
     ('freq', CountEncoder(normalize=True), freq_cols),
-    ('targ', TargetEncoder(), target_cols),
+    ('targ', TargetEncoder(cv=skf), target_cols),
     ('ordi', OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1), ordinal_cols),
     ('bins', KBinsDiscretizer(n_bins=5, encode='ordinal', strategy='quantile'), binned_cols),
     ('hash', hash_transformer, hash_cols)
@@ -415,9 +433,35 @@ models = {
 
 
 def predict_pipeline(pipe, X_test):
-    y_preds = pipe.predict(X_test)
-    y_probs = pipe.predict_proba(X_test)[:, 1] if hasattr(pipe.named_steps['model'], "predict_proba") else None
+    if hasattr(pipe.named_steps['model'], "predict_proba"):
+        y_probs = pipe.predict_proba(X_test)[:, 1]
+        y_preds = (y_probs >= threshold).astype(int)
+    else:
+        y_probs = None
+        y_preds = pipe.predict(X_test)
+
     return y_preds, y_probs
+
+
+
+def get_cv_predictions(pipe, X, y, cv=5):
+    skf = StratifiedKFold(n_splits=cv, shuffle=True, random_state=42)
+    preds = np.zeros(len(y))
+    probs = np.zeros(len(y)) if hasattr(pipe.named_steps['model'], "predict_proba") else None
+
+    for train_idx, val_idx in skf.split(X, y):
+        X_train_fold, X_val_fold = X.iloc[train_idx], X.iloc[val_idx]
+        y_train_fold = y.iloc[train_idx]
+
+        fold_pipe = clone(pipe)
+        fold_pipe.fit(X_train_fold, y_train_fold)
+
+        preds[val_idx] = fold_pipe.predict(X_val_fold)
+
+        if probs is not None:
+            probs[val_idx] = fold_pipe.predict_proba(X_val_fold)[:, 1]
+
+    return preds, probs
 
 
 
@@ -441,6 +485,9 @@ def evaluate_pipeline(name, data):
     # Train the pipeline
     pipe = train_pipeline(name, X_train, y_train)
     model = pipe.named_steps['model']
+
+    # Generate out-of-fold predictions for CV on training set
+    cv_preds, cv_probs = get_cv_predictions(pipe, X_train, y_train)
 
     # Train metrics
     y_train_preds = pipe.predict(X_train)
@@ -472,7 +519,8 @@ def evaluate_pipeline(name, data):
     else:
         print(f'\n{name} - SKIPPING TEST & VALIDATION (no labels)')
 
-    joblib.dump(pipe, SAVE_DIR / f"{name}_pipeline.pkl")
+    if not model_configs.get(name, {}).get('baseline', False):
+        joblib.dump(pipe, SAVE_DIR / f"{name}_pipeline.pkl")
     return pipe, output_metrics
 
 
@@ -482,8 +530,6 @@ def train_pipeline(name, X_train, y_train):
     search_type = config.get('search_type')
     param_grid = config.get('param_grid', {})
     n_iter = config.get('n_iter', 10)
-
-    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 
     pipe = Pipeline([
         ('model', models[name])
