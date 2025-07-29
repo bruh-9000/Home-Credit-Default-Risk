@@ -285,29 +285,18 @@ def show_missing_data(df):
 
 
 
-def drop_columns(X):
+def handle_columns(X):
     if drop_or_keep == 'keep':
-        return X
-    
-    if isinstance(X, pd.DataFrame):
-        to_drop = [col for col in drop_features if col in X.columns]
-        X = X.drop(columns=to_drop)
-        X = X.reset_index(drop=True)
-    return pd.DataFrame(X)
-dropper = FunctionTransformer(drop_columns, validate=False, feature_names_out='one-to-one')
-
-
-
-def keep_columns(X):
-    if drop_or_keep == 'drop':
-        return X
-
-    if isinstance(X, pd.DataFrame):
         to_keep = [col for col in keep_features if col in X.columns]
         X = X[to_keep].copy()
         X = X.reset_index(drop=True)
+    elif drop_or_keep == 'drop':
+        to_drop = [col for col in drop_features if col in X.columns]
+        X = X.drop(columns=to_drop)
+        X = X.reset_index(drop=True)
+
     return pd.DataFrame(X)
-keeper = FunctionTransformer(keep_columns, validate=False, feature_names_out='one-to-one')
+column_handler = FunctionTransformer(handle_columns, validate=False, feature_names_out='one-to-one')
 
 
 
@@ -409,13 +398,14 @@ hash_transformer = NamedFunctionTransformer(
 
 
 cleaning_pipeline = Pipeline([
-    ('drop_columns', dropper),
-    ('keep_columns', keeper),
+    ('handle_columns', column_handler),
     ('map_values', mapper),
     ('handle_missing', missing_handler),
     ('money_convert', dollar_string_converter),
     ('coerce_types', coercer)
 ])
+
+
 
 preprocessor = ColumnTransformer([
     ('nums', StandardScaler(), numerical_scale_cols),
@@ -427,24 +417,6 @@ preprocessor = ColumnTransformer([
     ('hash', hash_transformer, hash_cols)
 ], remainder='passthrough')
 preprocessor.set_output(transform='pandas')
-
-
-
-def build_pipeline(name):
-    steps = [
-        ('cleaning', cleaning_pipeline),
-        ('preprocessing', preprocessor),
-    ]
-
-    if resampling_type == 'over':
-        steps.append(('resample', SMOTEENN(sampling_strategy=resampling_strategy, random_state=42)))
-    elif resampling_type == 'under':
-        steps.append(('resample', RandomUnderSampler(sampling_strategy=resampling_strategy, random_state=42)))
-    # Else: skip resampling entirely
-
-    steps.append(('model', models[name]))
-
-    return ImbPipeline(steps)
 
 
 
@@ -500,7 +472,20 @@ def train_pipeline(name, X_train, y_train):
     param_grid = config.get('param_grid', {})
     n_iter = config.get('n_iter', 10)
 
-    pipe = build_pipeline(name)
+    cleaning_transformer = FunctionTransformer(cleaning_pipeline.fit_transform(X_train), validate=False)
+    steps = [
+        ('cleaning', cleaning_transformer),
+        ('preprocessing', preprocessor),
+    ]
+
+    if resampling_type == 'over':
+        steps.append(('resample', SMOTEENN(sampling_strategy=resampling_strategy, random_state=42)))
+    elif resampling_type == 'under':
+        steps.append(('resample', RandomUnderSampler(sampling_strategy=resampling_strategy, random_state=42)))
+
+    steps.append(('model', models[name]))
+
+    pipe = ImbPipeline(steps)
 
     if search_type == 'grid':
         search = GridSearchCV(pipe, param_grid=param_grid, cv=skf, scoring=primary_metric, n_jobs=-1)
