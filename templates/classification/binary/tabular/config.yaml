@@ -7,6 +7,7 @@ general:
   cv_splits: 5
   resampling_type: none # under, over, none
   resampling_strategy: .5
+  drop_or_keep: keep # drop is blacklist, keep is whitelist
 
 preprocessing:
   drop_features: []

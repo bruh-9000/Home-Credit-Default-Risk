@@ -49,6 +49,7 @@ threshold: float
 cv_splits: int
 resampling_type: str
 resampling_strategy: float
+drop_or_keep: str
 
 drop_features: list
 keep_features: list
@@ -79,6 +80,7 @@ def load_config():
         "cv_splits": config["general"]["cv_splits"],
         "resampling_type": config["general"]["resampling_type"],
         "resampling_strategy": config["general"]["resampling_strategy"],
+        "drop_or_keep": config["general"]["drop_or_keep"],
 
         "drop_features": config["preprocessing"]["drop_features"],
         "keep_features": config["preprocessing"]["keep_features"],
@@ -293,12 +295,28 @@ def show_missing_data(df):
 
 
 def drop_columns(X):
+    if drop_or_keep == 'keep':
+        return
+    
     if isinstance(X, pd.DataFrame):
         to_drop = [col for col in drop_features if col in X.columns]
         X = X.drop(columns=to_drop)
         X = X.reset_index(drop=True)
     return pd.DataFrame(X)
 dropper = FunctionTransformer(drop_columns, validate=False)
+
+
+
+def keep_columns(X):
+    if drop_or_keep == 'drop':
+        return
+
+    if isinstance(X, pd.DataFrame):
+        to_keep = [col for col in keep_features if col in X.columns]
+        X = X[to_keep].copy()
+        X = X.reset_index(drop=True)
+    return pd.DataFrame(X)
+keeper = FunctionTransformer(keep_columns, validate=False)
 
 
 
@@ -401,6 +419,7 @@ hash_transformer = NamedFunctionTransformer(
 
 cleaning_pipeline = Pipeline([
     ('drop_columns', dropper),
+    ('keep_columns', keeper),
     ('map_values', mapper),
     ('handle_missing', missing_handler),
     ('money_convert', dollar_string_converter),
