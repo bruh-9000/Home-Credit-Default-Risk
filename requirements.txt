@@ -1,0 +1,16 @@
+pandas
+numpy
+scikit-learn==1.3.2
+lightgbm
+matplotlib
+seaborn
+shap==0.43.0
+joblib
+PyYAML
+missingno
+category-encoders==2.6.1
+imblearn
+IPython
+ipykernel
+ipywidgets
+jinja2
