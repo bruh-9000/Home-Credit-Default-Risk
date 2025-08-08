@@ -1,9 +1,9 @@
-# Project Overview
+# Project overview
 
-#### Dataset Description
+#### Dataset description
 The [**Home Credit Default Risk**](https://www.kaggle.com/competitions/home-credit-default-risk/overview) dataset from the **Home Credit Group** has over 307,000 examples. It contains a mixture of flags/booleans, numbers, and categorical values. Additional CSVs provide historical and external credit data for feature engineering.
 
-#### Target Variable and Eval Metrics
+#### Target variable and eval. metrics
 The target variable is `TARGET`, the likelihood that an applicant will default on their loan. The primary evaluation metric is the **area under the ROC curve**, which measures the models' abilities to rank defaulters above non-defaulters.
 
 #### Goal
